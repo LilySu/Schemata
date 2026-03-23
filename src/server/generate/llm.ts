@@ -62,14 +62,40 @@ export async function* streamCompletion({
       });
 
       let yieldCount = 0;
+      let firstChunkReceived = false;
+      const earlyBuffer: string[] = [];
+
       for await (const chunk of result.textStream) {
-        if (chunk) {
-          yieldCount++;
+        if (!chunk) continue;
+        yieldCount++;
+
+        if (!firstChunkReceived) {
+          // Buffer early chunks to confirm the model is working
+          earlyBuffer.push(chunk);
+          if (earlyBuffer.length >= 3) {
+            firstChunkReceived = true;
+            for (const buffered of earlyBuffer) {
+              yield buffered;
+            }
+          }
+        } else {
           yield chunk;
         }
       }
+
+      // If we got some chunks but fewer than 3, yield them now
+      if (!firstChunkReceived && earlyBuffer.length > 0) {
+        for (const buffered of earlyBuffer) {
+          yield buffered;
+        }
+        yieldCount = earlyBuffer.length;
+      }
+
       console.log(`[llm] model ${currentModel} completed, yielded ${yieldCount} chunks`);
-      return; // Success — don't try fallbacks
+      if (yieldCount === 0) {
+        throw new Error(`Model ${currentModel} returned empty response`);
+      }
+      return; // Don't try fallbacks
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       console.error(`[llm] model ${currentModel} FAILED:`, lastError.message);

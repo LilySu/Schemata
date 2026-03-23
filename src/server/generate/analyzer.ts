@@ -8,6 +8,7 @@ export interface RepoAnalysis {
   projectType: string;
   techStack: string[];
   summary: string;
+  externalServices: string[];
   components: GraphNode[];
   groups: GraphGroup[];
 }
@@ -124,8 +125,8 @@ export function analyzeRepo(
 
   const projectType = detectProjectType(paths, pathSet);
   const techStack = detectTechStack(paths, pathSet);
-  const externalServices = detectExternalServices(readme, paths);
-  const { components, groups } = extractComponents(paths, pathSet, externalServices);
+  const extServices = detectExternalServices(readme, paths);
+  const { components, groups } = extractComponents(paths, pathSet, extServices);
   const summary = buildSummary(readme, projectType, techStack);
 
   // Restore full paths for click events if we narrowed the root
@@ -135,7 +136,9 @@ export function analyzeRepo(
     }
   }
 
-  return { projectType, techStack, summary, components, groups };
+  const externalServices = [...extServices.values()].map((s) => s.label);
+
+  return { projectType, techStack, summary, externalServices, components, groups };
 }
 
 /**
@@ -404,4 +407,18 @@ function buildSummary(readme: string, projectType: string, techStack: string[]):
   const stackStr = techStack.length > 0 ? ` using ${techStack.join(", ")}` : "";
 
   return `${typeLabel} project${stackStr}. ${description}`.slice(0, 500);
+}
+
+export function buildAnalyzerHints(analysis: RepoAnalysis): string {
+  const lines: string[] = [];
+  const typeLabel =
+    PROJECT_INDICATORS[analysis.projectType]?.label ?? analysis.projectType;
+  lines.push(`Project type: ${typeLabel}`);
+  if (analysis.techStack.length > 0) {
+    lines.push(`Tech stack: ${analysis.techStack.join(", ")}`);
+  }
+  if (analysis.externalServices.length > 0) {
+    lines.push(`External services detected: ${analysis.externalServices.join(", ")}`);
+  }
+  return lines.join("\n");
 }

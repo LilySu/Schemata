@@ -74,13 +74,20 @@ export function stripJsonCodeFences(text: string): string {
     .trim();
 }
 
+export interface MetaLine {
+  kind: "meta";
+  is_leaf?: boolean;
+}
+
+export type ParsedJsonlLine = GraphItem | MetaLine;
+
 /**
- * Parse a single JSONL line into a GraphItem, or return null if unparseable.
+ * Parse a single JSONL line into a GraphItem or MetaLine, or return null if unparseable.
  * Skips blank lines, array brackets, and lines that don't look like JSON objects.
  */
 export function parseJsonlLine(
   line: string,
-): GraphItem | null {
+): ParsedJsonlLine | null {
   const trimmed = line.trim();
   if (!trimmed || trimmed === "[" || trimmed === "]" || trimmed === ",") {
     return null;
@@ -93,12 +100,15 @@ export function parseJsonlLine(
     if (
       typeof parsed === "object" &&
       parsed !== null &&
-      "kind" in parsed &&
-      ((parsed as { kind: string }).kind === "node" ||
-        (parsed as { kind: string }).kind === "edge" ||
-        (parsed as { kind: string }).kind === "group")
+      "kind" in parsed
     ) {
-      return parsed as GraphItem;
+      const kind = (parsed as { kind: string }).kind;
+      if (kind === "node" || kind === "edge" || kind === "group") {
+        return parsed as GraphItem;
+      }
+      if (kind === "meta") {
+        return parsed as MetaLine;
+      }
     }
     return null;
   } catch {

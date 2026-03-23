@@ -1,5 +1,5 @@
 const DEFAULT_MODEL = "google/gemini-2.5-flash-lite";
-const DEFAULT_FALLBACK_MODELS = ["google/gemini-2.5-flash"];
+const DEFAULT_FALLBACK_MODELS = ["google/gemini-2.5-flash", "anthropic/claude-sonnet-4-6"];
 
 function readEnvValue(name: string): string | undefined {
   const value = process.env[name]?.trim();

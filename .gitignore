@@ -69,3 +69,4 @@ drizzle/meta/
 
 # backend node_modules (if backend/package.json is ever re-added)
 backend/node_modules/
+*.mov

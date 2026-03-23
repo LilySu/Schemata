@@ -57,7 +57,9 @@ function shouldIncludeFile(path: string): boolean {
 }
 
 function createHeaders(githubPat?: string): HeadersInit {
-  const token = githubPat?.trim();
+  const token =
+    githubPat?.trim() ||
+    process.env.GITHUB_PAT?.trim();
 
   if (!token) {
     return {

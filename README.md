@@ -2,7 +2,13 @@
 
 A fork of [GitDiagram](https://gitdiagram.com) that visualizes any GitHub repository as an interactive, explorable diagram. Unlike the original — which uses 3 LLM calls per diagram and generates flat, non-expandable Mermaid charts — Schemata uses a hybrid approach that minimizes LLM usage and recursively pre-generates every layer of the directory tree in the background.
 
-<video src="docs/Schemata.mov" autoplay loop muted playsinline width="100%"></video>
+<p align="center">
+  <img src="https://github.com/LilySu/Schemata/raw/main/docs/Schemata_01.png" alt="Schemata example" width="100%" />
+</p>
+
+<p align="center">
+  <a href="https://youtu.be/OgBiJI3oBdQ">Watch on YouTube</a>
+</p>
 
 ## How Schemata Differs from GitDiagram
 
@@ -232,5 +238,3 @@ Model selection is configured in `src/server/generate/model-config.ts`:
 Forked from [GitDiagram](https://github.com/ahmedkhaleel2004/gitdiagram) by [Ahmed Khaleel](https://ahmedkhaleel.com). Original project inspiration from [Gitingest](https://gitingest.com/) by Romain Courtois.
 
 ---
-
-![Schemata — example showing an interactive React Flow diagram generated from a GitHub repository](docs/project_example.png)

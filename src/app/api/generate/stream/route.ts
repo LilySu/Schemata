@@ -1,12 +1,12 @@
 import { getModel } from "~/server/generate/model-config";
-import { analyzeRepo } from "~/server/generate/analyzer";
+import { analyzeRepo, buildAnalyzerHints } from "~/server/generate/analyzer";
 import {
-  extractComponentMapping,
   parseJsonlLine,
   processNodePaths,
   stripJsonCodeFences,
   toTaggedMessage,
 } from "~/server/generate/format";
+import type { MetaLine } from "~/server/generate/format";
 import {
   getFileContent,
   getGithubData,
@@ -17,10 +17,10 @@ import {
   streamCompletion,
 } from "~/server/generate/llm";
 import {
+  SYSTEM_DATAFLOW_PROMPT,
+  SYSTEM_DRILLDOWN_CONCEPTUAL_PROMPT,
   SYSTEM_DRILLDOWN_DIAGRAM_PROMPT,
-  SYSTEM_DRILLDOWN_DIRECTORY_PROMPT,
   SYSTEM_DRILLDOWN_FILE_PROMPT,
-  SYSTEM_EDGES_PROMPT,
 } from "~/server/generate/prompts";
 import { generateRequestSchema, sseMessage } from "~/server/generate/types";
 import type { GraphData } from "~/features/diagram/graph-types";
@@ -92,6 +92,7 @@ export async function POST(request: Request) {
             let userData: Record<string, string>;
 
             if (isFile) {
+              // File-level drill-down: 2-stage (explanation + diagram) — kept as-is
               let fileContent = await getFileContent(
                 username,
                 repo,
@@ -104,58 +105,107 @@ export async function POST(request: Request) {
                 fileContent =
                   lines.slice(0, 3000).join("\n") + "\n... (truncated)";
               }
-              systemPrompt = SYSTEM_DRILLDOWN_FILE_PROMPT;
-              userData = {
-                parent_context: parentExplanation ?? "",
-                scope_path: scopePath,
-                file_content: fileContent,
-              };
+
+              // Stage 1: Explanation
+              send({ status: "explanation", message: `Analyzing ${scopePath}...` });
+              let explanationResponse = "";
+              for await (const chunk of streamCompletion({
+                model,
+                systemPrompt: SYSTEM_DRILLDOWN_FILE_PROMPT,
+                userPrompt: toTaggedMessage({
+                  parent_context: parentExplanation ?? "",
+                  scope_path: scopePath,
+                  file_content: fileContent,
+                }),
+                apiKey,
+                reasoningEffort: "medium",
+              })) {
+                explanationResponse += chunk;
+                send({ status: "explanation_chunk", chunk });
+              }
+
+              let explanation = explanationResponse;
+              const expStart = explanationResponse.indexOf("<explanation>");
+              const expEnd = explanationResponse.indexOf("</explanation>");
+              if (expStart !== -1 && expEnd !== -1) {
+                explanation = explanationResponse.slice(expStart, expEnd + "</explanation>".length);
+              }
+
+              // Stage 2: Diagram
+              send({ status: "diagram", message: "Generating diagram..." });
+              let lineBuffer = "";
+              const graphData: GraphData = { nodes: [], edges: [], groups: [] };
+
+              for await (const chunk of streamCompletion({
+                model,
+                systemPrompt: SYSTEM_DRILLDOWN_DIAGRAM_PROMPT,
+                userPrompt: toTaggedMessage({ explanation }),
+                apiKey,
+                reasoningEffort: "low",
+              })) {
+                lineBuffer += chunk;
+                send({ status: "diagram_chunk", chunk });
+                let newlineIdx: number;
+                while ((newlineIdx = lineBuffer.indexOf("\n")) !== -1) {
+                  const line = lineBuffer.slice(0, newlineIdx);
+                  lineBuffer = lineBuffer.slice(newlineIdx + 1);
+                  const cleaned = stripJsonCodeFences(line);
+                  const item = parseJsonlLine(cleaned);
+                  if (item && item.kind !== "meta") {
+                    if (item.kind === "node") graphData.nodes.push(item);
+                    else if (item.kind === "edge") graphData.edges.push(item);
+                    else if (item.kind === "group") graphData.groups!.push(item);
+                    send({ status: "diagram_item", item });
+                  }
+                }
+              }
+              if (lineBuffer.trim()) {
+                const cleaned = stripJsonCodeFences(lineBuffer);
+                const item = parseJsonlLine(cleaned);
+                if (item && item.kind !== "meta") {
+                  if (item.kind === "node") graphData.nodes.push(item);
+                  else if (item.kind === "edge") graphData.edges.push(item);
+                  else if (item.kind === "group") graphData.groups!.push(item);
+                  send({ status: "diagram_item", item });
+                }
+              }
+
+              if (graphData.nodes.length === 0) {
+                send({ status: "error", error: "Diagram generation produced no valid nodes. Please retry.", error_code: "EMPTY_DIAGRAM" });
+                controller.close();
+                return;
+              }
+
+              const processedGraph = processNodePaths(graphData, username, repo, githubData.defaultBranch, githubData.fileTree, true);
+              send({
+                status: "complete",
+                diagram: JSON.stringify(processedGraph),
+                explanation,
+                mapping: "",
+                is_leaf: true,
+              });
+              controller.close();
+              return;
             } else {
-              const scopedTree = getScopedFileTree(
-                githubData.fileTree,
-                scopePath,
-              );
-              const scopedLines = scopedTree
-                .split("\n")
-                .filter((l) => l.trim());
+              // Directory drill-down: single conceptual LLM call
+              const scopedTree = getScopedFileTree(githubData.fileTree, scopePath);
+              const scopedLines = scopedTree.split("\n").filter((l) => l.trim());
               if (scopedLines.length < 3) {
-                send({
-                  status: "error",
-                  error: `Directory '${scopePath}' has fewer than 3 files. Open it on GitHub instead.`,
-                  error_code: "SCOPE_TOO_SMALL",
-                });
+                send({ status: "error", error: `Directory '${scopePath}' has fewer than 3 files. Open it on GitHub instead.`, error_code: "SCOPE_TOO_SMALL" });
                 controller.close();
                 return;
               }
 
               const entryPointNames = [
-                "index.ts",
-                "index.tsx",
-                "index.js",
-                "main.py",
-                "__init__.py",
-                "mod.rs",
-                "lib.rs",
-                "main.go",
-                "main.ts",
-                "app.ts",
-                "app.py",
+                "index.ts", "index.tsx", "index.js", "main.py", "__init__.py",
+                "mod.rs", "lib.rs", "main.go", "main.ts", "app.ts", "app.py",
               ];
               const fileContentsParts: string[] = [];
               for (const line of scopedLines.slice(0, 50)) {
                 const filename = line.split("/").pop() ?? line;
-                if (
-                  entryPointNames.includes(filename) &&
-                  fileContentsParts.length < 5
-                ) {
+                if (entryPointNames.includes(filename) && fileContentsParts.length < 5) {
                   try {
-                    const content = await getFileContent(
-                      username,
-                      repo,
-                      line,
-                      githubData.defaultBranch,
-                      githubPat,
-                    );
+                    const content = await getFileContent(username, repo, line, githubData.defaultBranch, githubPat);
                     fileContentsParts.push(`--- ${line} ---\n${content}`);
                   } catch {
                     // skip files that can't be fetched
@@ -163,8 +213,9 @@ export async function POST(request: Request) {
                 }
               }
 
-              systemPrompt = SYSTEM_DRILLDOWN_DIRECTORY_PROMPT;
-              userData = {
+              send({ status: "diagram", message: `Generating diagram for ${scopePath}...` });
+
+              const userData: Record<string, string> = {
                 parent_context: parentExplanation ?? "",
                 scope_path: scopePath,
                 sub_tree: scopedTree,
@@ -172,131 +223,73 @@ export async function POST(request: Request) {
               if (fileContentsParts.length > 0) {
                 userData.file_contents = fileContentsParts.join("\n\n");
               }
-            }
 
-            // Stage 1: Explanation + component mapping (combined)
-            send({
-              status: "explanation",
-              message: `Analyzing ${scopePath}...`,
-            });
+              let lineBuffer = "";
+              let isLeaf = false;
+              const graphData: GraphData = { nodes: [], edges: [], groups: [] };
 
-            let explanationResponse = "";
-            for await (const chunk of streamCompletion({
-              model,
-              systemPrompt,
-              userPrompt: toTaggedMessage(userData),
-              apiKey,
-              reasoningEffort: "medium",
-            })) {
-              explanationResponse += chunk;
-              send({ status: "explanation_chunk", chunk });
-            }
-
-            let explanation = explanationResponse;
-            const expStart = explanationResponse.indexOf("<explanation>");
-            const expEnd = explanationResponse.indexOf("</explanation>");
-            if (expStart !== -1 && expEnd !== -1) {
-              explanation = explanationResponse.slice(
-                expStart,
-                expEnd + "</explanation>".length,
-              );
-            }
-
-            const componentMapping =
-              extractComponentMapping(explanationResponse);
-            const isLeaf = explanationResponse
-              .toLowerCase()
-              .includes("<is_leaf>true</is_leaf>");
-
-            // Stage 2: Diagram generation
-            send({
-              status: "diagram",
-              message: "Generating diagram...",
-            });
-
-            const diagramData: Record<string, string> = { explanation };
-            if (
-              !isFile &&
-              explanationResponse.includes("<component_mapping>")
-            ) {
-              diagramData.component_mapping = componentMapping;
-            }
-
-            // Stream JSONL and emit diagram_item events progressively
-            let lineBuffer = "";
-            const graphData: GraphData = { nodes: [], edges: [], groups: [] };
-
-            for await (const chunk of streamCompletion({
-              model,
-              systemPrompt: SYSTEM_DRILLDOWN_DIAGRAM_PROMPT,
-              userPrompt: toTaggedMessage(diagramData),
-              apiKey,
-              reasoningEffort: "low",
-            })) {
-              lineBuffer += chunk;
-              send({ status: "diagram_chunk", chunk });
-
-              // Process complete lines
-              let newlineIdx: number;
-              while ((newlineIdx = lineBuffer.indexOf("\n")) !== -1) {
-                const line = lineBuffer.slice(0, newlineIdx);
-                lineBuffer = lineBuffer.slice(newlineIdx + 1);
-                const cleaned = stripJsonCodeFences(line);
-                const item = parseJsonlLine(cleaned);
-                if (item) {
-                  if (item.kind === "node") graphData.nodes.push(item);
-                  else if (item.kind === "edge") graphData.edges.push(item);
-                  else if (item.kind === "group")
-                    graphData.groups!.push(item);
-                  send({ status: "diagram_item", item });
+              for await (const chunk of streamCompletion({
+                model,
+                systemPrompt: SYSTEM_DRILLDOWN_CONCEPTUAL_PROMPT,
+                userPrompt: toTaggedMessage(userData),
+                apiKey,
+                reasoningEffort: "medium",
+              })) {
+                lineBuffer += chunk;
+                send({ status: "diagram_chunk", chunk });
+                let newlineIdx: number;
+                while ((newlineIdx = lineBuffer.indexOf("\n")) !== -1) {
+                  const line = lineBuffer.slice(0, newlineIdx);
+                  lineBuffer = lineBuffer.slice(newlineIdx + 1);
+                  const cleaned = stripJsonCodeFences(line);
+                  const item = parseJsonlLine(cleaned);
+                  if (item) {
+                    if (item.kind === "meta") {
+                      if ((item as MetaLine).is_leaf) isLeaf = true;
+                    } else {
+                      if (item.kind === "node") graphData.nodes.push(item);
+                      else if (item.kind === "edge") graphData.edges.push(item);
+                      else if (item.kind === "group") graphData.groups!.push(item);
+                      send({ status: "diagram_item", item });
+                    }
+                  }
                 }
               }
-            }
-
-            // Process any remaining buffer
-            if (lineBuffer.trim()) {
-              const cleaned = stripJsonCodeFences(lineBuffer);
-              const item = parseJsonlLine(cleaned);
-              if (item) {
-                if (item.kind === "node") graphData.nodes.push(item);
-                else if (item.kind === "edge") graphData.edges.push(item);
-                else if (item.kind === "group") graphData.groups!.push(item);
-                send({ status: "diagram_item", item });
+              if (lineBuffer.trim()) {
+                const cleaned = stripJsonCodeFences(lineBuffer);
+                const item = parseJsonlLine(cleaned);
+                if (item) {
+                  if (item.kind === "meta") {
+                    if ((item as MetaLine).is_leaf) isLeaf = true;
+                  } else {
+                    if (item.kind === "node") graphData.nodes.push(item);
+                    else if (item.kind === "edge") graphData.edges.push(item);
+                    else if (item.kind === "group") graphData.groups!.push(item);
+                    send({ status: "diagram_item", item });
+                  }
+                }
               }
-            }
 
-            if (graphData.nodes.length === 0) {
+              if (graphData.nodes.length === 0) {
+                send({ status: "error", error: "Diagram generation produced no valid nodes. Please retry.", error_code: "EMPTY_DIAGRAM" });
+                controller.close();
+                return;
+              }
+
+              const processedGraph = processNodePaths(graphData, username, repo, githubData.defaultBranch, githubData.fileTree, true);
               send({
-                status: "error",
-                error:
-                  "Diagram generation produced no valid nodes. Please retry.",
-                error_code: "EMPTY_DIAGRAM",
+                status: "complete",
+                diagram: JSON.stringify(processedGraph),
+                explanation: parentExplanation ?? "",
+                mapping: "",
+                is_leaf: isLeaf,
               });
               controller.close();
               return;
             }
-
-            const processedGraph = processNodePaths(
-              graphData,
-              username,
-              repo,
-              githubData.defaultBranch,
-              githubData.fileTree,
-              true,
-            );
-
-            send({
-              status: "complete",
-              diagram: JSON.stringify(processedGraph),
-              explanation,
-              mapping: isFile ? "" : componentMapping,
-              is_leaf: isLeaf,
-            });
-            controller.close();
-            return;
           }
 
-          // ---- Hybrid pipeline: deterministic nodes + LLM edges ----
+          // ---- Conceptual data-flow pipeline ----
           const tokenCount = estimateRepoTokenCount(
             githubData.fileTree,
             githubData.readme,
@@ -332,9 +325,8 @@ export async function POST(request: Request) {
             return;
           }
 
-          // Step 1: Deterministic analysis (instant)
-          console.log("[stream] === HYBRID PIPELINE START ===");
-          console.log("[stream] tokenCount:", tokenCount);
+          // Step 1: Analyzer for hints (instant — no nodes emitted)
+          console.log("[stream] === CONCEPTUAL PIPELINE START ===");
           send({
             status: "analyzing",
             message: "Analyzing repository structure...",
@@ -345,66 +337,46 @@ export async function POST(request: Request) {
             githubData.readme,
             repo,
           );
+          const analyzerHints = buildAnalyzerHints(analysis);
 
-          console.log("[stream] analyzer produced", analysis.components.length, "nodes,", analysis.groups.length, "groups");
+          console.log("[stream] analyzer hints:", analyzerHints);
 
-          const graphData: GraphData = {
-            nodes: [...analysis.components],
-            edges: [],
-            groups: [...analysis.groups],
-          };
-
-          // Emit pre-computed nodes instantly
-          for (const group of analysis.groups) {
-            send({
-              status: "diagram_item",
-              item: { kind: "group" as const, ...group },
-            });
-          }
-          for (const node of analysis.components) {
-            send({
-              status: "diagram_item",
-              item: { kind: "node" as const, ...node },
-            });
-          }
-
-          // Step 2: Single LLM call for edges + missing components
-          console.log("[stream] Step 2: calling LLM for edges with model:", model);
+          // Step 2: Single LLM call for full conceptual diagram
           send({
             status: "diagram",
-            message: "Generating relationships...",
+            message: "Generating data flow diagram...",
           });
 
-          const nodesJsonl = analysis.components
-            .map((n) => JSON.stringify({ kind: "node", ...n }))
-            .join("\n");
-          console.log("[stream] nodesJsonl length:", nodesJsonl.length, "chars");
-
+          const graphData: GraphData = { nodes: [], edges: [], groups: [] };
           let lineBuffer = "";
-          let edgeChunkCount = 0;
+          let chunkCount = 0;
+
           for await (const chunk of streamCompletion({
             model,
-            systemPrompt: SYSTEM_EDGES_PROMPT,
+            systemPrompt: SYSTEM_DATAFLOW_PROMPT,
             userPrompt: toTaggedMessage({
               project_summary: analysis.summary,
-              nodes: nodesJsonl,
+              analyzer_hints: analyzerHints,
               file_tree: githubData.fileTree,
+              readme: githubData.readme,
             }),
             apiKey,
-            reasoningEffort: "low",
+            reasoningEffort: "medium",
           })) {
-            edgeChunkCount++;
+            chunkCount++;
             lineBuffer += chunk;
             send({ status: "diagram_chunk", chunk });
 
-            // Process complete lines
             let newlineIdx: number;
             while ((newlineIdx = lineBuffer.indexOf("\n")) !== -1) {
               const line = lineBuffer.slice(0, newlineIdx);
               lineBuffer = lineBuffer.slice(newlineIdx + 1);
               const cleaned = stripJsonCodeFences(line);
+              if (cleaned.trim()) {
+                console.log("[stream] parsing line:", cleaned.slice(0, 200));
+              }
               const item = parseJsonlLine(cleaned);
-              if (item) {
+              if (item && item.kind !== "meta") {
                 if (item.kind === "node") graphData.nodes.push(item);
                 else if (item.kind === "edge") graphData.edges.push(item);
                 else if (item.kind === "group") graphData.groups!.push(item);
@@ -413,14 +385,14 @@ export async function POST(request: Request) {
             }
           }
 
-          console.log("[stream] LLM stream ended. chunks:", edgeChunkCount);
-          console.log("[stream] remaining lineBuffer:", JSON.stringify(lineBuffer.slice(0, 200)));
+          console.log("[stream] LLM stream ended. chunks:", chunkCount);
+          console.log("[stream] remaining lineBuffer (first 2000 chars):", lineBuffer.slice(0, 2000));
 
           // Process any remaining buffer
           if (lineBuffer.trim()) {
             const cleaned = stripJsonCodeFences(lineBuffer);
             const item = parseJsonlLine(cleaned);
-            if (item) {
+            if (item && item.kind !== "meta") {
               if (item.kind === "node") graphData.nodes.push(item);
               else if (item.kind === "edge") graphData.edges.push(item);
               else if (item.kind === "group") graphData.groups!.push(item);
@@ -447,7 +419,7 @@ export async function POST(request: Request) {
             repo,
             githubData.defaultBranch,
             githubData.fileTree,
-            true, // enable drill-down on directory nodes
+            true,
           );
 
           console.log("[stream] sending complete. nodes:", processedGraph.nodes.length, "edges:", processedGraph.edges.length);
@@ -457,7 +429,7 @@ export async function POST(request: Request) {
             explanation: analysis.summary,
             mapping: "",
           });
-          console.log("[stream] === HYBRID PIPELINE DONE ===");
+          console.log("[stream] === CONCEPTUAL PIPELINE DONE ===");
         } catch (error) {
           console.error("[stream] CAUGHT ERROR:", error);
           send({
