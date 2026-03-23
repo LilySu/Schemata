@@ -3,9 +3,27 @@ export interface ModelPricing {
   outputPerMillionUsd: number;
 }
 
-const DEFAULT_PRICING_MODEL = "gpt-5.4-mini";
+const DEFAULT_PRICING_MODEL = "openai/gpt-5.4-mini";
 
 const MODEL_PRICING: Record<string, ModelPricing> = {
+  // Provider-prefixed (new format)
+  "openai/gpt-5.4": { inputPerMillionUsd: 2.5, outputPerMillionUsd: 15.0 },
+  "openai/gpt-5.4-pro": { inputPerMillionUsd: 30.0, outputPerMillionUsd: 180.0 },
+  "openai/gpt-5.4-mini": { inputPerMillionUsd: 0.75, outputPerMillionUsd: 4.5 },
+  "openai/gpt-5.4-nano": { inputPerMillionUsd: 0.2, outputPerMillionUsd: 1.25 },
+  "openai/o4-mini": { inputPerMillionUsd: 1.1, outputPerMillionUsd: 4.4 },
+
+  "anthropic/claude-sonnet-4.6": { inputPerMillionUsd: 3.0, outputPerMillionUsd: 15.0 },
+  "anthropic/claude-opus-4.6": { inputPerMillionUsd: 15.0, outputPerMillionUsd: 75.0 },
+  "anthropic/claude-haiku-4.5": { inputPerMillionUsd: 0.8, outputPerMillionUsd: 4.0 },
+
+  "google/gemini-2.0-flash": { inputPerMillionUsd: 0.1, outputPerMillionUsd: 0.4 },
+  "google/gemini-2.0-flash-lite": { inputPerMillionUsd: 0.025, outputPerMillionUsd: 0.15 },
+  "google/gemini-2.5-pro": { inputPerMillionUsd: 1.25, outputPerMillionUsd: 10.0 },
+  "google/gemini-2.5-flash-lite": { inputPerMillionUsd: 0.025, outputPerMillionUsd: 0.15 },
+  "google/gemini-2.5-flash": { inputPerMillionUsd: 0.15, outputPerMillionUsd: 0.6 },
+
+  // Unprefixed (backwards compat)
   "gpt-5.4": { inputPerMillionUsd: 2.5, outputPerMillionUsd: 15.0 },
   "gpt-5.4-pro": { inputPerMillionUsd: 30.0, outputPerMillionUsd: 180.0 },
   "gpt-5.4-mini": { inputPerMillionUsd: 0.75, outputPerMillionUsd: 4.5 },
@@ -37,8 +55,20 @@ export function resolvePricingModel(model: string): string {
   const normalized = normalizeModelId(model);
   if (MODEL_PRICING[normalized]) return normalized;
 
+  // Try stripping provider prefix for legacy lookup
+  const withoutProvider = normalized.includes("/")
+    ? normalized.split("/").slice(1).join("/")
+    : normalized;
+  if (MODEL_PRICING[withoutProvider]) return withoutProvider;
+
   const withoutDate = stripDateSnapshotSuffix(normalized);
   if (MODEL_PRICING[withoutDate]) return withoutDate;
+
+  // Also try without provider after date stripping
+  const withoutDateNoProvider = withoutDate.includes("/")
+    ? withoutDate.split("/").slice(1).join("/")
+    : withoutDate;
+  if (MODEL_PRICING[withoutDateNoProvider]) return withoutDateNoProvider;
 
   if (withoutDate.startsWith("gpt-5.4-pro")) return "gpt-5.4-pro";
   if (withoutDate.startsWith("gpt-5.4-mini")) return "gpt-5.4-mini";

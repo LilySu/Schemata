@@ -1,40 +1,21 @@
 import { NextResponse } from "next/server";
 
-import { toTaggedMessage } from "~/server/generate/format";
 import { getGithubData } from "~/server/generate/github";
 import { getModel } from "~/server/generate/model-config";
-import { countInputTokens, estimateTokens } from "~/server/generate/openai";
-import { SYSTEM_FIRST_PROMPT } from "~/server/generate/prompts";
+import { estimateTokens } from "~/server/generate/llm";
 import { estimateTextTokenCostUsd } from "~/server/generate/pricing";
 import { generateRequestSchema } from "~/server/generate/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
-const MULTI_STAGE_INPUT_MULTIPLIER = 2;
-const INPUT_OVERHEAD_TOKENS = 3000;
-const ESTIMATED_OUTPUT_TOKENS = 8000;
+// Hybrid pipeline: 1 LLM call (edges only) instead of 3
+const MULTI_STAGE_INPUT_MULTIPLIER = 1;
+const INPUT_OVERHEAD_TOKENS = 1000;
+const ESTIMATED_OUTPUT_TOKENS = 3000;
 
-async function estimateRepoInputTokens(
-  model: string,
-  fileTree: string,
-  readme: string,
-  apiKey?: string,
-) {
-  try {
-    return await countInputTokens({
-      model,
-      systemPrompt: SYSTEM_FIRST_PROMPT,
-      userPrompt: toTaggedMessage({
-        file_tree: fileTree,
-        readme,
-      }),
-      apiKey,
-      reasoningEffort: "medium",
-    });
-  } catch {
-    return estimateTokens(`${fileTree}\n${readme}`);
-  }
+function estimateRepoInputTokens(fileTree: string, readme: string) {
+  return estimateTokens(`${fileTree}\n${readme}`);
 }
 
 export async function POST(request: Request) {
@@ -57,11 +38,9 @@ export async function POST(request: Request) {
     const githubData = await getGithubData(username, repo, githubPat);
     const model = getModel();
 
-    const baseInputTokens = await estimateRepoInputTokens(
-      model,
+    const baseInputTokens = estimateRepoInputTokens(
       githubData.fileTree,
       githubData.readme,
-      apiKey,
     );
     const estimatedInputTokens =
       baseInputTokens * MULTI_STAGE_INPUT_MULTIPLIER + INPUT_OVERHEAD_TOKENS;

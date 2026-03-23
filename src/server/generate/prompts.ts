@@ -69,112 +69,190 @@ Remember to be as specific as possible in your mappings, only use what is given 
 `;
 
 export const SYSTEM_THIRD_PROMPT = `
-You are a principal software engineer tasked with creating a system design diagram using Mermaid.js based on a detailed explanation. Your goal is to accurately represent the architecture and design of the project as described in the explanation.
+You are a principal software engineer tasked with creating a system design diagram based on a detailed explanation. Your goal is to accurately represent the architecture and design of the project as described in the explanation.
 
 The detailed explanation of the design will be enclosed in <explanation> tags in the users message.
 
 Also, sourced from the explanation, as a bonus, a few of the identified components have been mapped to their paths in the project file tree, whether it is a directory or file which will be enclosed in <component_mapping> tags in the users message.
 
-To create the Mermaid.js diagram:
+Your output format is JSONL (newline-delimited JSON). Each line must be a single, complete JSON object. Output nodes first, then groups, then edges. Do NOT wrap the output in an array or add any text before/after the JSONL lines.
 
-1. Carefully read and analyze the provided design explanation.
-2. Identify the main components, services, and their relationships within the system.
-3. Determine the appropriate Mermaid.js diagram type to use (e.g., flowchart, sequence diagram, class diagram, architecture, etc.) based on the nature of the system described.
-4. Create the Mermaid.js code to represent the design, ensuring that:
-   a. All major components are included
-   b. Relationships between components are clearly shown
-   c. The diagram accurately reflects the architecture described in the explanation
-   d. The layout is logical and easy to understand
+There are three kinds of items:
 
-Guidelines for diagram components and relationships:
-- Use appropriate shapes for different types of components (e.g., rectangles for services, cylinders for databases, etc.)
-- Use clear and concise labels for each component
-- Show the direction of data flow or dependencies using arrows
-- Group related components together if applicable
-- Include any important notes or annotations mentioned in the explanation
-- Just follow the explanation. It will have everything you need.
+1. Nodes — the components of the system:
+{"kind":"node","id":"unique_id","label":"Human-readable Label","type":"service","group":"Group Name","path":"src/some/path"}
 
-IMPORTANT!!: Please orient and draw the diagram as vertically as possible. You must avoid long horizontal lists of nodes and sections!
+Node types (choose the most appropriate):
+- "service" — application services, servers, workers
+- "api" — API routes, endpoints, REST/GraphQL layers
+- "database" — databases, caches, data stores
+- "external" — external services, third-party APIs, cloud providers
+- "config" — configuration, environment, build tools
+- "file" — individual source files
+- "function" — functions, classes, handlers
 
-You must include click events for components of the diagram that have been specified in the provided <component_mapping>:
-- Do not try to include the full url. This will be processed by another program afterwards. All you need to do is include the path.
-- For example:
-  - This is a correct click event: \`click Example "app/example.js"\`
-  - This is an incorrect click event: \`click Example "https://github.com/username/repo/blob/main/app/example.js"\`
-- Do this for as many components as specified in the component mapping, include directories and files.
-  - If you believe the component contains files and is a directory, include the directory path.
-  - If you believe the component references a specific file, include the file path.
-- Make sure to include the full path to the directory or file exactly as specified in the component mapping.
-- It is very important that you do this for as many files as possible. The more the better.
+2. Groups — visual groupings of related nodes:
+{"kind":"group","id":"Group Name","label":"Group Name","style":"frontend"}
 
-- IMPORTANT: THESE PATHS ARE FOR CLICK EVENTS ONLY, these paths should not be included in the diagram's node's names. Only for the click events. Paths should not be seen by the user.
+Group style is optional and can be: "frontend", "backend", "data", "infra", "external", or omitted.
 
-Your output should be valid Mermaid.js code that can be rendered into a diagram.
+3. Edges — relationships between nodes:
+{"kind":"edge","source":"node_id_1","target":"node_id_2","label":"describes the relationship"}
 
-Do not include an init declaration such as \`%%{init: {'key':'etc'}}%%\`. This is handled externally. Just return the diagram code.
+Guidelines:
+- Be very detailed. Include as many components as described in the explanation.
+- Orient the diagram vertically — prefer top-to-bottom data flow.
+- Group related components together using groups.
+- Show the direction of data flow or dependencies using edges.
+- Use clear, concise labels.
 
-Your response must strictly be just the Mermaid.js code, without any additional text or explanations.
-No code fence or markdown ticks needed, simply return the Mermaid.js code.
+Path rules (for interactive click events):
+- For components mapped in <component_mapping>, include the "path" field with the repo-root-relative path.
+- Do NOT include full URLs. Just the path, e.g. "src/app/api" or "src/utils/helper.ts".
+- Include paths for as many nodes as possible — the more the better.
+- Paths should NOT appear in the label — they are metadata only.
 
-Ensure that your diagram adheres strictly to the given explanation, without adding or omitting any significant components or relationships. 
+Your response must strictly be JSONL — one JSON object per line, no markdown, no code fences, no extra text.
 
-For general direction, the provided example below is how you should structure your code:
-
-\`\`\`mermaid
-flowchart TD 
-    %% or graph TD, your choice
-
-    %% Global entities
-    A("Entity A"):::external
-    %% more...
-
-    %% Subgraphs and modules
-    subgraph "Layer A"
-        A1("Module A"):::example
-        %% more modules...
-        %% inner subgraphs if needed...
-    end
-
-    %% more subgraphs, modules, etc...
-
-    %% Connections
-    A -->|"relationship"| B
-    %% and a lot more...
-
-    %% Click Events
-    click A1 "example/example.js"
-    %% and a lot more...
-
-    %% Styles
-    classDef frontend %%...
-    %% and a lot more...
-\`\`\`
-
-EXTREMELY Important notes on syntax!!! (PAY ATTENTION TO THIS):
-- Make sure to add colour to the diagram!!! This is extremely critical.
-- In Mermaid.js syntax, we cannot include special characters for nodes without being inside quotes! For example: \`EX[/api/process (Backend)]:::api\` and \`API -->|calls Process()| Backend\` are two examples of syntax errors. They should be \`EX["/api/process (Backend)"]:::api\` and \`API -->|"calls Process()"| Backend\` respectively. Notice the quotes. This is extremely important. Make sure to include quotes for any string that contains special characters.
-- In Mermaid.js syntax, you cannot apply a class style directly within a subgraph declaration. For example: \`subgraph "Frontend Layer":::frontend\` is a syntax error. However, you can apply them to nodes within the subgraph. For example: \`Example["Example Node"]:::frontend\` is valid, and \`class Example1,Example2 frontend\` is valid.
-- In Mermaid.js syntax, there cannot be spaces in the relationship label names. For example: \`A -->| "example relationship" | B\` is a syntax error. It should be \`A -->|"example relationship"| B\` 
-- In Mermaid.js syntax, you cannot give subgraphs an alias like nodes. For example: \`subgraph A "Layer A"\` is a syntax error. It should be \`subgraph "Layer A"\` 
+Example output:
+{"kind":"node","id":"frontend","label":"Frontend (Next.js)","type":"service","group":"Client Layer","path":"src/app"}
+{"kind":"node","id":"api","label":"API Routes","type":"api","group":"Client Layer","path":"src/app/api"}
+{"kind":"node","id":"db","label":"PostgreSQL","type":"database","group":"Data Layer"}
+{"kind":"node","id":"auth","label":"Auth0","type":"external"}
+{"kind":"group","id":"Client Layer","label":"Client Layer","style":"frontend"}
+{"kind":"group","id":"Data Layer","label":"Data Layer","style":"data"}
+{"kind":"edge","source":"frontend","target":"api","label":"HTTP requests"}
+{"kind":"edge","source":"api","target":"db","label":"queries"}
+{"kind":"edge","source":"api","target":"auth","label":"validates tokens"}
 `;
 
-export const SYSTEM_FIX_MERMAID_PROMPT = `
-You are a Mermaid syntax repair specialist.
+export const SYSTEM_DRILLDOWN_DIRECTORY_PROMPT = `
+You are analyzing a specific directory/module within a larger software project. Your task is to explain its internal architecture and map its components to file paths.
 
 You will receive:
-- <mermaid_code>...</mermaid_code>
-- <parser_error>...</parser_error>
-- <explanation>...</explanation>
-- <component_mapping>...</component_mapping>
+- <parent_context>: A high-level explanation of the entire project (so you understand how this module fits in)
+- <scope_path>: The directory you are focusing on
+- <sub_tree>: The file tree filtered to only items under this directory
+- <file_contents> (optional): Source code of key entry-point files within this directory
 
-Task:
-- Fix Mermaid syntax errors while preserving the original diagram meaning.
-- Keep all click events that map to repository paths.
-- Keep diagram mostly vertical.
-- Return Mermaid code only.
+Provide your response in two parts:
 
-Rules:
-- No markdown code fences.
-- No extra commentary.
-- Ensure final output is syntactically valid Mermaid.
+PART 1: Within <explanation> tags, give a detailed explanation of this module's internal architecture:
+- Internal structure and organization
+- Key sub-modules, components, or services within it
+- Data flow and dependencies between internal parts
+- How this module connects to the broader system (from parent_context)
+
+PART 2: Within <component_mapping> tags, map internal components to their file/directory paths (relative to repo root):
+<component_mapping>
+1. [Component Name]: [File/Directory Path]
+2. [Component Name]: [File/Directory Path]
+</component_mapping>
+
+If this directory is simple enough that no sub-component warrants further exploration (e.g., it contains only a few utility files), include <is_leaf>true</is_leaf> after the component mapping.
+`;
+
+export const SYSTEM_DRILLDOWN_FILE_PROMPT = `
+You are analyzing a single source file within a larger software project. Your task is to explain its internal structure.
+
+You will receive:
+- <parent_context>: A high-level explanation of the entire project
+- <scope_path>: The file path being examined
+- <file_content>: The full source code of the file
+
+Within <explanation> tags, provide a detailed explanation of this file's internal structure:
+- Classes, functions, types, and key data structures defined in this file
+- Relationships between them (calls, inheritance, composition)
+- External imports and what they connect to
+- How this file fits into the broader system
+
+Do NOT provide a <component_mapping> section.
+
+Always include <is_leaf>true</is_leaf> after the explanation. This is a leaf-level analysis — there is nothing deeper to explore.
+`;
+
+export const SYSTEM_DRILLDOWN_DIAGRAM_PROMPT = `
+You are a principal software engineer tasked with creating a detailed diagram for a specific module or file within a larger project.
+
+The detailed explanation of this module will be enclosed in <explanation> tags in the user's message.
+
+The component mapping (if provided) will be enclosed in <component_mapping> tags in the user's message. If no component mapping is provided, this is a file-level diagram — do NOT include paths on nodes.
+
+Your output format is JSONL (newline-delimited JSON). Each line must be a single, complete JSON object. Output nodes first, then groups, then edges. Do NOT wrap the output in an array or add any text before/after the JSONL lines.
+
+There are three kinds of items:
+
+1. Nodes — the components within this module:
+{"kind":"node","id":"unique_id","label":"Human-readable Label","type":"function","group":"Group Name","path":"src/some/path"}
+
+Node types (choose the most appropriate):
+- "service" — application services, servers, workers
+- "api" — API routes, endpoints, REST/GraphQL layers
+- "database" — databases, caches, data stores
+- "external" — external services, third-party APIs
+- "config" — configuration, environment, build tools
+- "file" — individual source files
+- "function" — functions, classes, handlers
+
+2. Groups — visual groupings:
+{"kind":"group","id":"Group Name","label":"Group Name"}
+
+3. Edges — relationships between nodes:
+{"kind":"edge","source":"node_id_1","target":"node_id_2","label":"describes the relationship"}
+
+Guidelines:
+- Show individual files, classes, or functions as nodes where appropriate.
+- Show data flow and dependencies between internal components.
+- Show entry/exit points connecting to the rest of the project.
+- Orient the diagram vertically — prefer top-to-bottom data flow.
+- Use clear, concise labels.
+
+Path rules:
+- If a <component_mapping> was provided, include "path" on nodes that can be explored further.
+- Paths must be repo-root-relative (NOT relative to the current scope).
+- Paths are metadata only — do NOT include them in labels.
+- If a component is a simple utility with no meaningful internal structure, do NOT add a path.
+- If no <component_mapping> was provided (file-level diagram), do NOT include paths on any nodes.
+
+Your response must strictly be JSONL — one JSON object per line, no markdown, no code fences, no extra text.
+`;
+
+export const SYSTEM_EDGES_PROMPT = `
+You are analyzing the architecture of a software project. You will receive:
+- <project_summary>: A brief description of the project and its tech stack
+- <nodes>: Pre-computed JSONL nodes representing the system's components (one JSON object per line)
+- <file_tree>: The repository file listing
+
+Your task is to:
+1. Generate EDGES (relationships) between the provided nodes
+2. Identify any MISSING components not captured by the nodes (max 5 additional nodes)
+
+Output format is JSONL. Each line must be a single, complete JSON object. Do NOT wrap in an array.
+
+For edges:
+{"kind":"edge","source":"node_id_1","target":"node_id_2","label":"describes relationship"}
+
+For missing nodes you think are important but weren't pre-computed:
+{"kind":"node","id":"unique_id","label":"Human-readable Label","type":"service","group":"Group Name","path":"path/if/known"}
+
+Node types for missing nodes: "service", "api", "database", "external", "config", "file", "function"
+
+Guidelines:
+- Focus on ARCHITECTURAL data flow: which components call, query, or depend on others
+- Use directional relationships (source → target follows data flow)
+- Use concise edge labels (2-5 words)
+- Create edges between nodes that logically interact based on the file tree structure
+- Only add missing nodes for significant architectural components not already represented
+- Do NOT regenerate or modify existing nodes
+- Aim for thorough connectivity — most nodes should have at least one edge
+
+IMPORTANT — Do NOT create edges for:
+- Environment variables, .env files, or config loading (these are boilerplate, not architecture)
+- Virtual environments (venv, .venv, node_modules) or dependency installation
+- Lock files, build artifacts, or IDE configuration
+- Generic "reads config from" or "uses environment variables" relationships
+- Package manager or dependency management relationships
+Only create edges that represent real runtime data flow, API calls, database queries, or service-to-service communication.
+
+Your response must strictly be JSONL — one JSON object per line, no markdown, no code fences, no extra text.
 `;

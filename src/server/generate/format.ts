@@ -1,3 +1,5 @@
+import type { GraphData, GraphItem } from "~/features/diagram/graph-types";
+
 type TaggedValues = Record<string, string | undefined>;
 
 export function toTaggedMessage(values: TaggedValues): string {
@@ -7,22 +9,48 @@ export function toTaggedMessage(values: TaggedValues): string {
     .join("\n");
 }
 
-export function processClickEvents(
-  diagram: string,
+export function processNodePaths(
+  graph: GraphData,
   username: string,
   repo: string,
   branch: string,
-): string {
-  const clickPattern = /click ([^\s"]+)\s+"([^"]+)"/g;
+  fileTree?: string,
+  drillDown?: boolean,
+): GraphData {
+  const treeLines = fileTree ? new Set(fileTree.split("\n")) : null;
 
-  return diagram.replace(clickPattern, (_, nodeId: string, path: string) => {
-    const trimmedPath = path.trim().replace(/^['"]|['"]$/g, "");
-    const isFile = trimmedPath.includes(".") && !trimmedPath.endsWith("/");
-    const pathType = isFile ? "blob" : "tree";
-    const fullUrl = `https://github.com/${username}/${repo}/${pathType}/${branch}/${trimmedPath}`;
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) => {
+      if (!node.path) return node;
 
-    return `click ${nodeId} "${fullUrl}"`;
-  });
+      let isFile = node.path.includes(".") && !node.path.endsWith("/");
+      if (treeLines) {
+        const hasChildren = [...treeLines].some((line) =>
+          line.startsWith(node.path + "/"),
+        );
+        if (hasChildren) isFile = false;
+      }
+
+      if (isFile) {
+        return {
+          ...node,
+          clickUrl: `https://github.com/${username}/${repo}/blob/${branch}/${node.path}`,
+        };
+      } else if (drillDown) {
+        return {
+          ...node,
+          clickAction: "drilldown" as const,
+          clickPath: node.path,
+        };
+      } else {
+        return {
+          ...node,
+          clickUrl: `https://github.com/${username}/${repo}/tree/${branch}/${node.path}`,
+        };
+      }
+    }),
+  };
 }
 
 export function extractComponentMapping(response: string): string {
@@ -38,6 +66,42 @@ export function extractComponentMapping(response: string): string {
   return response.slice(startIndex, endIndex);
 }
 
-export function stripMermaidCodeFences(text: string): string {
-  return text.replace(/```mermaid/g, "").replace(/```/g, "").trim();
+export function stripJsonCodeFences(text: string): string {
+  return text
+    .replace(/```json\s*/g, "")
+    .replace(/```jsonl\s*/g, "")
+    .replace(/```/g, "")
+    .trim();
+}
+
+/**
+ * Parse a single JSONL line into a GraphItem, or return null if unparseable.
+ * Skips blank lines, array brackets, and lines that don't look like JSON objects.
+ */
+export function parseJsonlLine(
+  line: string,
+): GraphItem | null {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed === "[" || trimmed === "]" || trimmed === ",") {
+    return null;
+  }
+  // Remove trailing comma (LLM may add commas between array elements)
+  const cleaned = trimmed.replace(/,\s*$/, "");
+  if (!cleaned.startsWith("{")) return null;
+  try {
+    const parsed: unknown = JSON.parse(cleaned);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "kind" in parsed &&
+      ((parsed as { kind: string }).kind === "node" ||
+        (parsed as { kind: string }).kind === "edge" ||
+        (parsed as { kind: string }).kind === "group")
+    ) {
+      return parsed as GraphItem;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }

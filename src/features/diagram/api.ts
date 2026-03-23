@@ -75,6 +75,10 @@ export async function streamDiagramGeneration(
       repo: params.repo,
       api_key: params.apiKey,
       github_pat: params.githubPat,
+      ...(params.scopePath && { scope_path: params.scopePath }),
+      ...(params.parentExplanation && {
+        parent_explanation: params.parentExplanation,
+      }),
     }),
   });
 

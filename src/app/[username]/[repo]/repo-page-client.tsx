@@ -1,13 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo } from "react";
 import MainCard from "~/components/main-card";
 import Loading from "~/components/loading";
-import MermaidChart from "~/components/mermaid-diagram";
+import FlowDiagram from "~/components/flow-diagram";
+import { Breadcrumbs } from "~/components/breadcrumbs";
 import { useDiagram } from "~/hooks/useDiagram";
 import { ApiKeyDialog } from "~/components/api-key-dialog";
 import { ApiKeyButton } from "~/components/api-key-button";
 import { useStarReminder } from "~/hooks/useStarReminder";
+import type { GraphData } from "~/features/diagram/graph-types";
 
 type RepoPageClientProps = {
   username: string;
@@ -15,7 +17,6 @@ type RepoPageClientProps = {
 };
 
 export default function RepoPageClient({ username, repo }: RepoPageClientProps) {
-  const [zoomingEnabled, setZoomingEnabled] = useState(false);
 
   useStarReminder();
 
@@ -26,6 +27,7 @@ export default function RepoPageClient({ username, repo }: RepoPageClientProps) 
     diagram,
     error,
     loading,
+    drillDownLoading,
     lastGenerated,
     cost,
     showApiKeyDialog,
@@ -35,8 +37,20 @@ export default function RepoPageClient({ username, repo }: RepoPageClientProps) 
     handleOpenApiKeyDialog,
     handleExportImage,
     handleRegenerate,
+    handleNodeClick,
+    drillDown,
     state,
   } = useDiagram(normalizedUsername, normalizedRepo);
+
+  // Parse the diagram JSON string into GraphData
+  const graphData = useMemo<GraphData | null>(() => {
+    if (!diagram) return null;
+    try {
+      return JSON.parse(diagram) as GraphData;
+    } catch {
+      return null;
+    }
+  }, [diagram]);
 
   return (
     <div className="flex flex-col items-center p-4">
@@ -49,21 +63,30 @@ export default function RepoPageClient({ username, repo }: RepoPageClientProps) 
           lastGenerated={lastGenerated}
           onExportImage={handleExportImage}
           onRegenerate={handleRegenerate}
-          zoomingEnabled={zoomingEnabled}
-          onZoomToggle={() => setZoomingEnabled((prev) => !prev)}
           loading={loading}
         />
       </div>
+      {drillDown.isSubDiagram && (
+        <div className="mt-4 w-full max-w-4xl px-4">
+          <Breadcrumbs
+            stack={drillDown.stack}
+            onNavigate={drillDown.popToLevel}
+            repoName={normalizedRepo}
+          />
+        </div>
+      )}
       <div className="mt-8 flex w-full flex-col items-center gap-8">
-        {loading ? (
+        {drillDownLoading ? (
+          <Loading
+            cost=""
+            status="started"
+            message="Generating sub-diagram..."
+          />
+        ) : loading ? (
           <Loading
             cost={cost}
             status={state.status}
             message={state.message}
-            parserError={state.parserError}
-            fixAttempt={state.fixAttempt}
-            fixMaxAttempts={state.fixMaxAttempts}
-            fixDiagramDraft={state.fixDiagramDraft}
             explanation={state.explanation}
             mapping={state.mapping}
             diagram={state.diagram}
@@ -87,7 +110,10 @@ export default function RepoPageClient({ username, repo }: RepoPageClientProps) 
           </div>
         ) : (
           <div className="flex w-full justify-center px-4">
-            <MermaidChart chart={diagram} zoomingEnabled={zoomingEnabled} />
+            <FlowDiagram
+              data={graphData}
+              onNodeClick={handleNodeClick}
+            />
           </div>
         )}
       </div>

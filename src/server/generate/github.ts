@@ -156,6 +156,38 @@ async function getReadme(
   return data.content;
 }
 
+export function getScopedFileTree(fullTree: string, scopePath: string): string {
+  const prefix = scopePath.replace(/\/+$/, "") + "/";
+  const lines = fullTree.split("\n");
+  const scoped = lines.filter((line) => line.startsWith(prefix));
+  return scoped.join("\n");
+}
+
+export async function getFileContent(
+  username: string,
+  repo: string,
+  path: string,
+  branch: string,
+  githubPat?: string,
+): Promise<string> {
+  const headers = createHeaders(githubPat);
+  const data = await fetchJson<GitHubReadmeResponse>(
+    `https://api.github.com/repos/${username}/${repo}/contents/${path}?ref=${branch}`,
+    headers,
+    `File not found: ${path}`,
+  );
+
+  if (!data.content) {
+    throw new Error(`No content found for file: ${path}`);
+  }
+
+  if (data.encoding === "base64") {
+    return Buffer.from(data.content, "base64").toString("utf-8");
+  }
+
+  return data.content;
+}
+
 export async function getGithubData(
   username: string,
   repo: string,

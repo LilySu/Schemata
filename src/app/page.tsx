@@ -3,32 +3,32 @@ import Hero from "~/components/hero";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "GitDiagram - Visualize Any GitHub Repository",
+  title: "Schemata - Visualize Any GitHub Repository",
   description:
     "Turn any GitHub repository into an interactive architecture diagram for quick codebase understanding.",
 };
 
 export default function HomePage() {
   return (
-    <main className="flex-grow px-8 pb-8 md:p-8">
-      <div className="mx-auto mb-4 max-w-4xl lg:my-8">
+    <main className="flex-grow px-6 pb-8 md:px-8">
+      <div className="mx-auto max-w-4xl pt-24 lg:pt-32">
         <Hero />
-        <div className="mt-12"></div>
-        <p className="mx-auto mt-8 max-w-2xl text-center text-lg">
-          Turn any GitHub repository into an interactive diagram for
-          visualization.
-        </p>
-        <p className="mx-auto mt-0 max-w-2xl text-center text-lg">
-          This is useful for quickly visualizing projects.
-        </p>
-        <p className="mx-auto mt-2 max-w-2xl text-center text-lg">
-          You can also replace &apos;hub&apos; with &apos;diagram&apos; in any
-          Github URL
+        <p className="mx-auto mt-8 max-w-xl text-center text-lg leading-relaxed text-gray-500">
+          Visualize and explore any codebase with interactive
+          architecture diagrams, generated instantly.
         </p>
       </div>
-      <div className="mb-16 flex justify-center lg:mb-0">
+      <div className="mt-12 flex justify-center">
         <MainCard />
       </div>
+      {/* Warm gradient accent */}
+      <div
+        className="pointer-events-none mx-auto mt-[-40px] h-40 max-w-3xl"
+        style={{
+          background:
+            "radial-gradient(ellipse at center, rgba(255, 200, 150, 0.3) 0%, rgba(255, 180, 120, 0.15) 40%, transparent 70%)",
+        }}
+      />
     </main>
   );
 }

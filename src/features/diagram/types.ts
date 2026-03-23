@@ -1,6 +1,9 @@
+import type { GraphItem } from "~/features/diagram/graph-types";
+
 export type DiagramStreamStatus =
   | "idle"
   | "started"
+  | "analyzing"
   | "explanation_sent"
   | "explanation"
   | "explanation_chunk"
@@ -10,10 +13,7 @@ export type DiagramStreamStatus =
   | "diagram_sent"
   | "diagram"
   | "diagram_chunk"
-  | "diagram_fixing"
-  | "diagram_fix_attempt"
-  | "diagram_fix_chunk"
-  | "diagram_fix_validating"
+  | "diagram_item"
   | "complete"
   | "error";
 
@@ -26,9 +26,6 @@ export interface DiagramStreamState {
   error?: string;
   errorCode?: string;
   parserError?: string;
-  fixAttempt?: number;
-  fixMaxAttempts?: number;
-  fixDiagramDraft?: string;
 }
 
 export interface DiagramStreamMessage {
@@ -41,8 +38,8 @@ export interface DiagramStreamMessage {
   error?: string;
   error_code?: string;
   parser_error?: string;
-  fix_attempt?: number;
-  fix_max_attempts?: number;
+  is_leaf?: boolean;
+  item?: GraphItem;
 }
 
 export interface DiagramCostResponse {
@@ -57,4 +54,14 @@ export interface StreamGenerationParams {
   repo: string;
   apiKey?: string;
   githubPat?: string;
+  scopePath?: string;
+  parentExplanation?: string;
+}
+
+export interface DrillDownLevel {
+  path: string;
+  label: string;
+  diagram: string;
+  explanation: string;
+  isLeaf?: boolean;
 }

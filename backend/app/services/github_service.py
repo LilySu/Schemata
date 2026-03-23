@@ -190,6 +190,30 @@ class GitHubService:
             return base64.b64decode(content).decode("utf-8")
         return content
 
+    def get_file_content(self, username: str, repo: str, path: str, branch: str) -> str:
+        """Fetch a single file's content from the GitHub Contents API."""
+        data = _fetch_json(
+            f"https://api.github.com/repos/{username}/{repo}/contents/{path}?ref={branch}",
+            self._get_headers(),
+            f"File not found: {path}",
+        )
+        content = data.get("content")
+        if not isinstance(content, str) or not content:
+            raise ValueError(f"No content found for file: {path}")
+
+        encoding = data.get("encoding")
+        if encoding == "base64":
+            return base64.b64decode(content).decode("utf-8")
+        return content
+
+    @staticmethod
+    def get_scoped_file_tree(full_tree: str, scope_path: str) -> str:
+        """Filter a full file tree to only paths under the given directory prefix."""
+        prefix = scope_path.rstrip("/") + "/"
+        lines = full_tree.split("\n")
+        scoped = [line for line in lines if line.startswith(prefix)]
+        return "\n".join(scoped)
+
     def get_github_data(self, username: str, repo: str) -> GithubData:
         default_branch = self.get_default_branch(username, repo)
         file_tree = self.get_github_file_paths_as_list(username, repo, default_branch)

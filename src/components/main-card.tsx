@@ -2,15 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Card } from "~/components/ui/card";
 import { Input } from "~/components/ui/input";
 import { Button } from "~/components/ui/button";
-import { Sparkles } from "lucide-react";
 import React from "react";
 import { exampleRepos, isExampleRepo } from "~/lib/exampleRepos";
 import { ExportDropdown } from "./export-dropdown";
 import { ChevronUp, ChevronDown } from "lucide-react";
-import { Switch } from "~/components/ui/switch";
+
 import { parseGitHubRepoUrl } from "~/features/diagram/github-url";
 
 interface MainCardProps {
@@ -21,8 +19,6 @@ interface MainCardProps {
   lastGenerated?: Date;
   onExportImage?: () => void;
   onRegenerate?: () => void;
-  zoomingEnabled?: boolean;
-  onZoomToggle?: () => void;
   loading?: boolean;
 }
 
@@ -34,8 +30,6 @@ export default function MainCard({
   lastGenerated,
   onExportImage,
   onRegenerate,
-  zoomingEnabled,
-  onZoomToggle,
   loading,
 }: MainCardProps) {
   const [repoUrl, setRepoUrl] = useState("");
@@ -77,19 +71,19 @@ export default function MainCard({
   };
 
   return (
-    <Card className="neo-panel relative w-full max-w-3xl !bg-[hsl(var(--neo-panel))] p-4 sm:p-8">
-      <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
+    <div className="relative w-full max-w-2xl rounded-2xl border border-gray-200 bg-white p-6 shadow-sm sm:p-8">
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:gap-3">
           <Input
             placeholder="https://github.com/username/repo"
-            className="neo-input flex-1 rounded-md px-3 py-4 text-base font-bold placeholder:text-base placeholder:font-normal placeholder:text-gray-700 sm:px-4 sm:py-6 sm:text-lg sm:placeholder:text-lg dark:placeholder:text-neutral-400"
+            className="flex-1 rounded-xl border border-gray-300 bg-white px-4 py-3 text-base font-medium text-gray-900 placeholder:font-normal placeholder:text-gray-400 focus:border-gray-400 focus:ring-0 sm:py-4 sm:text-lg"
             value={repoUrl}
             onChange={(e) => setRepoUrl(e.target.value)}
             required
           />
           <Button
             type="submit"
-            className="neo-button p-4 px-4 text-base sm:p-6 sm:px-6 sm:text-lg"
+            className="rounded-xl bg-gray-900 px-6 py-3 text-base font-medium text-white shadow-none hover:bg-gray-800 sm:py-4 sm:text-lg"
           >
             Diagram
           </Button>
@@ -100,11 +94,9 @@ export default function MainCard({
         {/* Dropdowns Container */}
         {!isHome && (
           <div className="space-y-4">
-            {/* Only show buttons and dropdowns when not loading */}
             {!loading && (
               <>
-                {/* Buttons Container */}
-                <div className="flex flex-col items-center gap-4 sm:flex-row sm:gap-4">
+                <div className="flex flex-col items-center gap-3 sm:flex-row sm:gap-3">
                   {onRegenerate && (
                     <button
                       type="button"
@@ -114,10 +106,10 @@ export default function MainCard({
                           ? "Regeneration is disabled for example repositories."
                           : undefined
                       }
-                      className={`flex items-center justify-between gap-2 rounded-md border-[3px] border-black px-4 py-2 font-medium text-black transition-colors sm:max-w-[250px] dark:text-black ${
+                      className={`flex items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium transition-colors ${
                         isExampleRepoSelected
-                          ? "cursor-not-allowed bg-purple-200 opacity-70 dark:bg-[#251b3a] dark:text-[hsl(var(--foreground))]"
-                          : "bg-purple-300 hover:bg-purple-400 dark:border-[#2d1d4e] dark:bg-[hsl(var(--neo-subtle-muted))] dark:hover:bg-[hsl(var(--neo-subtle))]"
+                          ? "cursor-not-allowed bg-gray-50 text-gray-400"
+                          : "bg-white text-gray-700 hover:bg-gray-50"
                       }`}
                       onClick={(e) => {
                         e.preventDefault();
@@ -136,39 +128,23 @@ export default function MainCard({
                           e.preventDefault();
                           handleDropdownToggle("export");
                         }}
-                        className={`flex cursor-pointer items-center justify-between gap-2 rounded-md border-[3px] border-black px-4 py-2 font-medium text-black transition-colors sm:max-w-[250px] dark:text-black ${
+                        className={`flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium transition-colors ${
                           activeDropdown === "export"
-                            ? "bg-purple-400 dark:border-[#2d1d4e] dark:bg-[hsl(var(--neo-button))]"
-                            : "bg-purple-300 hover:bg-purple-400 dark:border-[#2d1d4e] dark:bg-[hsl(var(--neo-subtle-muted))] dark:hover:bg-[hsl(var(--neo-button-hover))]"
+                            ? "bg-gray-100 text-gray-900"
+                            : "bg-white text-gray-700 hover:bg-gray-50"
                         }`}
                       >
                         <span>Export Diagram</span>
                         {activeDropdown === "export" ? (
-                          <ChevronUp size={20} />
+                          <ChevronUp size={16} />
                         ) : (
-                          <ChevronDown size={20} />
+                          <ChevronDown size={16} />
                         )}
                       </button>
                     </div>
                   )}
-                  {lastGenerated && (
-                    <>
-                      <label
-                        htmlFor="zoom-toggle"
-                        className="font-medium text-black dark:text-neutral-100"
-                      >
-                        Enable Zoom
-                      </label>
-                      <Switch
-                        id="zoom-toggle"
-                        checked={zoomingEnabled}
-                        onCheckedChange={onZoomToggle}
-                      />
-                    </>
-                  )}
                 </div>
 
-                {/* Dropdown Content */}
                 <div
                   className={`transition-all duration-200 ${
                     activeDropdown
@@ -192,8 +168,8 @@ export default function MainCard({
 
         {/* Example Repositories */}
         {isHome && (
-          <div className="space-y-2">
-            <div className="text-sm text-gray-700 dark:text-neutral-300 sm:text-base">
+          <div className="space-y-3">
+            <div className="text-sm text-gray-500">
               Try these example repositories:
             </div>
             <div className="flex flex-wrap gap-2">
@@ -201,7 +177,7 @@ export default function MainCard({
                 <Button
                   key={name}
                   variant="outline"
-                  className="border-2 border-black bg-purple-400 text-sm text-black transition-transform hover:-translate-y-0.5 hover:transform hover:bg-purple-300 dark:border-black dark:bg-[hsl(var(--neo-panel-muted))] dark:text-[hsl(var(--foreground))] dark:hover:bg-[hsl(var(--neo-button))] dark:hover:text-[#0d0a19] sm:text-base"
+                  className="rounded-full border border-gray-200 bg-gray-50 text-sm text-gray-600 shadow-none transition-colors hover:bg-gray-100 hover:text-gray-900"
                   onClick={(e) => handleExampleClick(path, e)}
                 >
                   {name}
@@ -211,15 +187,6 @@ export default function MainCard({
           </div>
         )}
       </form>
-
-      {/* Decorative Sparkle */}
-      <div className="absolute -bottom-8 -left-12 hidden sm:block">
-        <Sparkles
-          className="h-20 w-20 fill-sky-400 text-black dark:fill-[hsl(var(--neo-button))] dark:text-[hsl(var(--background))]"
-          strokeWidth={0.6}
-          style={{ transform: "rotate(-15deg)" }}
-        />
-      </div>
-    </Card>
+    </div>
   );
 }

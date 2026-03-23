@@ -1,11 +1,18 @@
 import "~/styles/globals.css";
 
 import { GeistSans } from "geist/font/sans";
+import { Playfair_Display } from "next/font/google";
 import { type Metadata } from "next";
 import { Header } from "~/components/header";
 import { Footer } from "~/components/footer";
 import { CSPostHogProvider } from "./providers";
 import { Toaster } from "~/components/ui/sonner";
+
+const playfair = Playfair_Display({
+  subsets: ["latin"],
+  variable: "--font-serif",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "GitDiagram",
@@ -78,8 +85,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      suppressHydrationWarning
-      className={`${GeistSans.variable}`}
+      className={`${GeistSans.variable} ${playfair.variable}`}
     >
       <body className="flex min-h-screen flex-col">
         <CSPostHogProvider>

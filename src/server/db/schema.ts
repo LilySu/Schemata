@@ -1,9 +1,7 @@
-// Example model schema from the Drizzle docs
-// https://orm.drizzle.team/docs/sql-schema-declaration
-
 import { sql } from "drizzle-orm";
 import {
   pgTableCreator,
+  text,
   timestamp,
   varchar,
   primaryKey,
@@ -23,10 +21,10 @@ export const diagramCache = createTable(
   {
     username: varchar("username", { length: 256 }).notNull(),
     repo: varchar("repo", { length: 256 }).notNull(),
-    diagram: varchar("diagram", { length: 10000 }).notNull(), // Adjust length as needed
-    explanation: varchar("explanation", { length: 10000 })
+    diagram: text("diagram").notNull(),
+    explanation: text("explanation")
       .notNull()
-      .default("No explanation provided"), // Default explanation to avoid data loss of existing rows
+      .default("No explanation provided"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .default(sql`CURRENT_TIMESTAMP`)
       .notNull(),
@@ -37,5 +35,28 @@ export const diagramCache = createTable(
   },
   (table) => ({
     pk: primaryKey({ columns: [table.username, table.repo] }),
+  }),
+);
+
+export const subDiagramCache = createTable(
+  "sub_diagram_cache",
+  {
+    username: varchar("username", { length: 256 }).notNull(),
+    repo: varchar("repo", { length: 256 }).notNull(),
+    scopePath: varchar("scope_path", { length: 1024 }).notNull(),
+    diagram: text("diagram").notNull(),
+    explanation: text("explanation").notNull(),
+    isLeaf: boolean("is_leaf").default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).$onUpdate(
+      () => new Date(),
+    ),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.username, table.repo, table.scopePath],
+    }),
   }),
 );

@@ -53,3 +53,19 @@ backend/.venv
 
 # vscode
 .vscode/
+
+# python caches & test artifacts
+.pytest_cache/
+backend/.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.pyc
+
+# turbo
+.turbo/
+
+# drizzle local
+drizzle/meta/
+
+# backend node_modules (if backend/package.json is ever re-added)
+backend/node_modules/

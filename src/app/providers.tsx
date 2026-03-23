@@ -2,7 +2,7 @@
 "use client";
 import posthog from "posthog-js";
 import { PostHogProvider } from "posthog-js/react";
-import { ThemeProvider } from "next-themes";
+
 
 if (typeof window !== "undefined") {
   // Only initialize PostHog if the environment variables are available
@@ -24,13 +24,6 @@ if (typeof window !== "undefined") {
 
 export function CSPostHogProvider({ children }: { children: React.ReactNode }) {
   return (
-    <ThemeProvider
-      attribute="class"
-      defaultTheme="light"
-      enableSystem={false}
-      storageKey="gitdiagram-theme"
-    >
-      <PostHogProvider client={posthog}>{children}</PostHogProvider>
-    </ThemeProvider>
+    <PostHogProvider client={posthog}>{children}</PostHogProvider>
   );
 }

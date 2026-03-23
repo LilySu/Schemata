@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.routers import generate
-from app.services.mermaid_service import MermaidValidationResult
 
 client = TestClient(app)
 
@@ -65,16 +64,20 @@ def test_generate_cost_error(monkeypatch):
     assert data["error_code"] == "COST_ESTIMATION_FAILED"
 
 
-def test_generate_stream_event_order_with_fix_loop(monkeypatch):
-    monkeypatch.setattr(
-        generate,
-        "_get_github_data",
-        lambda username, repo, github_pat=None: SimpleNamespace(
-            default_branch="main",
-            file_tree="src/main.py",
-            readme="# readme",
-        ),
+def test_generate_stream_jsonl_pipeline(monkeypatch):
+    fake_github_data = SimpleNamespace(
+        default_branch="main",
+        file_tree="src/main.py",
+        readme="# readme",
     )
+
+    class FakeGitHubService:
+        def __init__(self, pat=None):
+            pass
+        def get_github_data(self, username, repo):
+            return fake_github_data
+
+    monkeypatch.setattr(generate, "GitHubService", FakeGitHubService)
     monkeypatch.setattr(generate, "get_model", lambda: "gpt-5.4-mini")
 
     async def fake_estimate_repo_input_tokens(model, file_tree, readme, api_key=None):
@@ -89,21 +92,13 @@ def test_generate_stream_event_order_with_fix_loop(monkeypatch):
             yield "1. API: src/main.py"
             yield "</component_mapping>"
             return
-        if "syntax repair specialist" in system_prompt:
-            yield 'flowchart TD\nA["API"] --> B["Worker"]\nclick A "src/main.py"'
-            return
-        yield 'flowchart TD\nA["API"] --> B["Worker"]\nclick A "src/main.py"'
-
-    validation_results = iter(
-        [
-            MermaidValidationResult(valid=False, message="bad syntax"),
-            MermaidValidationResult(valid=True),
-        ]
-    )
+        # JSONL diagram output
+        yield '{"kind":"node","id":"api","label":"API","type":"service","path":"src/main.py"}\n'
+        yield '{"kind":"node","id":"worker","label":"Worker","type":"service"}\n'
+        yield '{"kind":"edge","source":"api","target":"worker","label":"dispatches"}\n'
 
     monkeypatch.setattr(generate, "_estimate_repo_input_tokens", fake_estimate_repo_input_tokens)
     monkeypatch.setattr(generate.openai_service, "stream_completion", fake_stream_completion)
-    monkeypatch.setattr(generate, "validate_mermaid_syntax", lambda diagram: next(validation_results))
 
     response = client.post(
         "/generate/stream",
@@ -125,13 +120,16 @@ def test_generate_stream_event_order_with_fix_loop(monkeypatch):
     assert "explanation_sent" in events
     assert "mapping_sent" in events
     assert "diagram_sent" in events
-    assert "diagram_fixing" in events
-    assert "diagram_fix_attempt" in events
-    assert "diagram_fix_validating" in events
+    assert "diagram_item" in events
     assert events[-1] == "complete"
     complete_payload = payloads[-1]
     assert complete_payload["status"] == "complete"
-    assert "https://github.com/acme/demo/blob/main/src/main.py" in complete_payload["diagram"]
+    diagram_data = json.loads(complete_payload["diagram"])
+    assert len(diagram_data["nodes"]) == 2
+    assert len(diagram_data["edges"]) == 1
+    # Check that processNodePaths resolved the path to a GitHub URL
+    api_node = next(n for n in diagram_data["nodes"] if n["id"] == "api")
+    assert "https://github.com/acme/demo/blob/main/src/main.py" in api_node.get("clickUrl", "")
 
 
 def test_modify_route_removed():

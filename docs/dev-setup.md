@@ -1,32 +1,12 @@
 # Local Development Setup
 
-This project runs generation primarily through the FastAPI backend in `backend/` (Railway in production).
-
-Next.js Route Handlers under `/api/generate/*` remain available as an optional fallback path.
-
 ## 1) Install tool versions
 
 Recommended versions:
 - Node.js: `22.x` (see `.nvmrc`)
-- pnpm: `9.13.0`
-- Python: `3.12.x` (required for FastAPI backend work)
-- uv: `0.5.24+` (required for FastAPI backend work)
-- Docker: latest stable
-
-Install/check:
-
-```bash
-node -v
-pnpm -v
-python3 --version
-uv --version
-docker --version
-```
-
-Expected:
-- Node starts with `v22`
-- pnpm prints `9.13.0` (or compatible in the same series)
-- Python starts with `3.12`
+- pnpm: `9.13.0+`
+- Python: `3.12.x` (only needed if working on the FastAPI backend)
+- uv: `0.5.24+` (only needed if working on the FastAPI backend)
 
 ## 2) Install frontend dependencies
 
@@ -34,87 +14,65 @@ Expected:
 pnpm install
 ```
 
-## 3) Sync backend dependencies with uv
-
-```bash
-cd backend
-uv sync --no-install-project
-cd ..
-```
-
-This creates `backend/.venv` and installs pinned Python dependencies from `backend/uv.lock`.
-
-## 4) Configure environment variables
+## 3) Configure environment variables
 
 ```bash
 cp .env.example .env
 ```
 
-Then set at least:
-- `POSTGRES_URL`
-- `OPENAI_API_KEY`
+Required:
+- `NEXT_PUBLIC_SUPABASE_URL` — Supabase project URL
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY` — Supabase anon key
+- `DATABASE_URL` — Direct Postgres connection string (Supabase)
+- At least one AI provider key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GOOGLE_GENERATIVE_AI_API_KEY`)
 
 Optional:
-- `OPENAI_MODEL` (single model used for all generation stages, defaults to `gpt-5.4-mini`)
-- `GITHUB_PAT`
-- `NEXT_PUBLIC_POSTHOG_KEY`
-- `NEXT_PUBLIC_USE_LEGACY_BACKEND=true` and `NEXT_PUBLIC_API_DEV_URL` (to route frontend calls to an external backend such as Railway/local FastAPI)
+- `AI_MODEL` — model selection in `provider/model` format (default: `google/gemini-2.5-flash-lite`)
+- `GITHUB_PAT` — increases GitHub API rate limit from 60/hr to 5,000/hr
 
-## 5) Start local services
-
-Start local Postgres (if using local DB URL):
-
-```bash
-chmod +x start-database.sh
-./start-database.sh
-```
-
-Push schema:
+## 4) Initialize the database
 
 ```bash
 pnpm db:push
 ```
 
-Start frontend:
+Browse the database with `pnpm db:studio`.
+
+## 5) Start the app
 
 ```bash
 pnpm dev
 ```
 
-Start FastAPI backend (recommended for production parity):
+Open [http://localhost:3000](http://localhost:3000).
+
+## 6) Verification
 
 ```bash
-docker-compose up --build -d
-docker-compose logs -f api
+pnpm check        # TypeScript + ESLint
+pnpm test          # Frontend tests (Vitest)
+pnpm build         # Production build
 ```
 
-or
+### Optional: FastAPI backend
+
+If working on the Python backend:
+
+```bash
+cd backend
+uv sync --no-install-project
+uv run pytest -q
+cd ..
+```
+
+To run it locally:
 
 ```bash
 pnpm dev:backend
 ```
 
-If the FastAPI backend is running locally at `http://localhost:8000`, set:
-- `NEXT_PUBLIC_USE_LEGACY_BACKEND=true`
-- `NEXT_PUBLIC_API_DEV_URL=http://localhost:8000`
-
-## 6) Verification commands
-
-Run all baseline checks:
-
-```bash
-pnpm check
-pnpm test
-pnpm build
+Then set in `.env`:
 ```
-
-FastAPI backend checks:
-
-```bash
-cd backend
-uv run pytest -q
-uv run python -m compileall app
-cd ..
+NEXT_PUBLIC_USE_LEGACY_BACKEND=true
+NEXT_PUBLIC_API_DEV_URL=http://localhost:8000
 ```
-
-If all pass, your local environment is ready.

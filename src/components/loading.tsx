@@ -27,10 +27,6 @@ interface LoadingProps {
   cost?: string;
   status: DiagramStreamStatus;
   message?: string;
-  parserError?: string;
-  fixAttempt?: number;
-  fixMaxAttempts?: number;
-  fixDiagramDraft?: string;
   explanation?: string;
   mapping?: string;
   diagram?: string;
@@ -47,9 +43,9 @@ const SequentialDots = () => {
   return (
     <span className="inline-flex w-8 justify-start">
       <span className="flex gap-0.5">
-        <span className="h-1 w-1 animate-[dot1_1.5s_steps(1)_infinite] rounded-full bg-[hsl(var(--neo-dot-active))]" />
-        <span className="h-1 w-1 animate-[dot2_1.5s_steps(1)_infinite] rounded-full bg-[hsl(var(--neo-dot-active))]" />
-        <span className="h-1 w-1 animate-[dot3_1.5s_steps(1)_infinite] rounded-full bg-[hsl(var(--neo-dot-active))]" />
+        <span className="h-1 w-1 animate-[dot1_1.5s_steps(1)_infinite] rounded-full bg-gray-500" />
+        <span className="h-1 w-1 animate-[dot2_1.5s_steps(1)_infinite] rounded-full bg-gray-500" />
+        <span className="h-1 w-1 animate-[dot3_1.5s_steps(1)_infinite] rounded-full bg-gray-500" />
       </span>
     </span>
   );
@@ -63,8 +59,8 @@ const StepDots = ({ currentStep }: { currentStep: number }) => {
           key={step}
           className={`h-1.5 w-1.5 rounded-full transition-colors duration-300 ${
             step <= currentStep
-              ? "bg-[hsl(var(--neo-dot-active))]"
-              : "bg-[hsl(var(--neo-dot-inactive))]"
+              ? "bg-gray-500"
+              : "bg-gray-300"
           }`}
         />
       ))}
@@ -75,10 +71,6 @@ const StepDots = ({ currentStep }: { currentStep: number }) => {
 export default function Loading({
   status = "idle",
   message,
-  parserError,
-  fixAttempt,
-  fixMaxAttempts,
-  fixDiagramDraft,
   explanation,
   mapping,
   diagram,
@@ -103,24 +95,12 @@ export default function Loading({
   }, [
     status,
     message,
-    parserError,
-    fixAttempt,
-    fixMaxAttempts,
-    fixDiagramDraft,
     explanation,
     mapping,
     diagram,
   ]);
 
   const shouldShowReasoning = (currentStatus: string) => {
-    if (
-      currentStatus === "diagram_fixing" ||
-      currentStatus === "diagram_fix_attempt" ||
-      currentStatus === "diagram_fix_chunk" ||
-      currentStatus === "diagram_fix_validating"
-    ) {
-      return null;
-    }
     if (
       currentStatus === "explanation_sent" ||
       (currentStatus.startsWith("explanation") && !explanation)
@@ -180,19 +160,12 @@ export default function Loading({
       case "diagram_sent":
       case "diagram":
       case "diagram_chunk":
+      case "diagram_item":
         return {
           text: reasoningType
             ? "Model is reasoning about diagram structure"
             : "Generating diagram...",
           isReasoning: !!reasoningType,
-        };
-      case "diagram_fixing":
-      case "diagram_fix_attempt":
-      case "diagram_fix_chunk":
-      case "diagram_fix_validating":
-        return {
-          text: message ?? "Fixing Mermaid syntax...",
-          isReasoning: false,
         };
       default:
         return {
@@ -204,30 +177,22 @@ export default function Loading({
 
   const statusDisplay = getStatusDisplay();
   const reasoningMessage = renderReasoningMessage();
-  const hasFixTelemetry =
-    status === "diagram_fixing" ||
-    status === "diagram_fix_attempt" ||
-    status === "diagram_fix_chunk" ||
-    status === "diagram_fix_validating" ||
-    typeof fixAttempt === "number" ||
-    !!parserError ||
-    !!fixDiagramDraft;
 
   return (
     <div className="mx-auto w-full max-w-4xl p-4">
-      <div className="overflow-hidden rounded-xl border-2 border-purple-200 bg-purple-50/30 backdrop-blur-sm dark:border-[#2d1d4e] dark:bg-[linear-gradient(160deg,#1a1228,#150f22)]">
-        <div className="border-b border-purple-100 bg-purple-100/50 px-6 py-3 dark:border-[#2d1d4e] dark:bg-[#1e1832]/90">
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-gray-50/50 backdrop-blur-sm">
+        <div className="border-b border-gray-200 bg-gray-100/60 px-6 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-purple-500 dark:text-[hsl(var(--neo-button-hover))]">
+              <span className="text-sm font-medium text-gray-600">
                 {statusDisplay.text}
               </span>
               {statusDisplay.isReasoning && <SequentialDots />}
             </div>
-            <div className="flex items-center gap-3 text-xs font-medium text-purple-500 dark:text-[hsl(var(--foreground))]">
+            <div className="flex items-center gap-3 text-xs font-medium text-gray-500">
               {cost && <span>Estimated cost: {cost}</span>}
               <div className="flex items-center gap-2">
-                <span className="rounded-full bg-purple-100 px-2 py-0.5 dark:bg-[#251b3a]">
+                <span className="rounded-full bg-gray-200 px-2 py-0.5">
                   Step {getStepNumber(status)}/3
                 </span>
                 <StepDots currentStep={getStepNumber(status)} />
@@ -243,7 +208,7 @@ export default function Loading({
             {reasoningMessage &&
               statusDisplay.isReasoning &&
               (explanation ?? mapping ?? diagram) && (
-                <div className="rounded-lg bg-purple-100/50 p-4 text-sm text-purple-500 dark:bg-[#1d1530] dark:text-[hsl(var(--foreground))]">
+                <div className="rounded-lg bg-gray-100/50 p-4 text-sm text-gray-600">
                   <div className="flex items-center gap-2">
                     <p className="font-medium">Reasoning</p>
                     <SequentialDots />
@@ -252,16 +217,16 @@ export default function Loading({
                 </div>
             )}
             {explanation && (
-              <div className="rounded-lg bg-white/50 p-4 text-sm text-gray-600 dark:bg-[#1a1228]/80 dark:text-[hsl(var(--foreground))]">
-                <p className="font-medium text-purple-500 dark:text-[hsl(var(--neo-link-hover))]">
+              <div className="rounded-lg bg-white/50 p-4 text-sm text-gray-600">
+                <p className="font-medium text-gray-800">
                   Explanation:
                 </p>
                 <p className="mt-2 leading-relaxed">{explanation}</p>
               </div>
             )}
             {mapping && (
-              <div className="rounded-lg bg-white/50 p-4 text-sm text-gray-600 dark:bg-[#1a1228]/80 dark:text-[hsl(var(--foreground))]">
-                <p className="font-medium text-purple-500 dark:text-[hsl(var(--neo-link-hover))]">
+              <div className="rounded-lg bg-white/50 p-4 text-sm text-gray-600">
+                <p className="font-medium text-gray-800">
                   Mapping:
                 </p>
                 <pre className="mt-2 overflow-x-auto whitespace-pre-wrap leading-relaxed">
@@ -270,42 +235,13 @@ export default function Loading({
               </div>
             )}
             {diagram && (
-              <div className="rounded-lg bg-white/50 p-4 text-sm text-gray-600 dark:bg-[#1a1228]/80 dark:text-[hsl(var(--foreground))]">
-                <p className="font-medium text-purple-500 dark:text-[hsl(var(--neo-link-hover))]">
-                  Mermaid.js diagram:
+              <div className="rounded-lg bg-white/50 p-4 text-sm text-gray-600">
+                <p className="font-medium text-gray-800">
+                  Diagram data:
                 </p>
                 <pre className="mt-2 overflow-x-auto whitespace-pre-wrap leading-relaxed">
                   {diagram}
                 </pre>
-              </div>
-            )}
-            {hasFixTelemetry && (
-              <div className="rounded-lg border border-purple-200 bg-white/70 p-4 text-sm text-gray-600 dark:border-[#2d1d4e] dark:bg-[#1a1228]/85 dark:text-[hsl(var(--foreground))]">
-                <p className="font-medium text-purple-500 dark:text-[hsl(var(--neo-link-hover))]">
-                  Syntax Repair Loop
-                </p>
-                {typeof fixAttempt === "number" &&
-                  typeof fixMaxAttempts === "number" && (
-                    <p className="mt-1 text-xs text-purple-500 dark:text-[hsl(var(--foreground))]">
-                      Attempt {fixAttempt}/{fixMaxAttempts}
-                    </p>
-                  )}
-                {message && <p className="mt-2 leading-relaxed">{message}</p>}
-                {parserError && (
-                  <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-md bg-purple-50 p-3 text-xs text-gray-700 dark:bg-[#130f22] dark:text-[hsl(var(--foreground))]">
-                    {parserError}
-                  </pre>
-                )}
-                {fixDiagramDraft && (
-                  <div className="mt-3">
-                    <p className="mb-2 text-xs font-medium text-purple-500 dark:text-[hsl(var(--neo-link-hover))]">
-                      Candidate Mermaid fix (streaming)
-                    </p>
-                    <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-purple-50 p-3 text-xs text-gray-700 dark:bg-[#130f22] dark:text-[hsl(var(--foreground))]">
-                      {fixDiagramDraft}
-                    </pre>
-                  </div>
-                )}
               </div>
             )}
           </div>

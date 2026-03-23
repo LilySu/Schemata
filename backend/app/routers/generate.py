@@ -11,13 +11,14 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.core.observability import Timer, log_event
 from app.prompts import (
+    SYSTEM_DRILLDOWN_DIAGRAM_PROMPT,
+    SYSTEM_DRILLDOWN_DIRECTORY_PROMPT,
+    SYSTEM_DRILLDOWN_FILE_PROMPT,
     SYSTEM_FIRST_PROMPT,
-    SYSTEM_FIX_MERMAID_PROMPT,
     SYSTEM_SECOND_PROMPT,
     SYSTEM_THIRD_PROMPT,
 )
 from app.services.github_service import GitHubService
-from app.services.mermaid_service import format_validation_feedback, validate_mermaid_syntax
 from app.services.model_config import get_model
 from app.services.openai_service import OpenAIService
 from app.services.pricing import estimate_text_token_cost_usd
@@ -26,7 +27,6 @@ router = APIRouter(prefix="/generate", tags=["OpenAI"])
 
 openai_service = OpenAIService()
 
-MAX_MERMAID_FIX_ATTEMPTS = 3
 MULTI_STAGE_INPUT_MULTIPLIER = 2
 INPUT_OVERHEAD_TOKENS = 3000
 ESTIMATED_OUTPUT_TOKENS = 8000
@@ -37,14 +37,16 @@ class GenerateRequest(BaseModel):
     repo: str = Field(min_length=1)
     api_key: str | None = Field(default=None, min_length=1)
     github_pat: str | None = Field(default=None, min_length=1)
+    scope_path: str | None = Field(default=None, min_length=1)
+    parent_explanation: str | None = Field(default=None, min_length=1)
 
 
 def _sse_message(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-def _strip_mermaid_code_fences(text: str) -> str:
-    return text.replace("```mermaid", "").replace("```", "").strip()
+def _strip_json_code_fences(text: str) -> str:
+    return re.sub(r"```(?:json|jsonl)?\s*", "", text).strip()
 
 
 def _extract_component_mapping(response: str) -> str:
@@ -57,18 +59,59 @@ def _extract_component_mapping(response: str) -> str:
     return response[start_index:end_index]
 
 
-def process_click_events(diagram: str, username: str, repo: str, branch: str) -> str:
-    click_pattern = r'click ([^\s"]+)\s+"([^"]+)"'
+def _parse_jsonl_line(line: str) -> dict[str, Any] | None:
+    """Parse a single JSONL line into a graph item, or return None if unparseable."""
+    trimmed = line.strip()
+    if not trimmed or trimmed in ("[", "]", ","):
+        return None
+    # Remove trailing comma (LLM may add commas between array elements)
+    cleaned = trimmed.rstrip(",").strip()
+    if not cleaned.startswith("{"):
+        return None
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, dict) and parsed.get("kind") in ("node", "edge", "group"):
+            return parsed
+        return None
+    except json.JSONDecodeError:
+        return None
 
-    def replace_path(match: re.Match[str]) -> str:
-        node_id = match.group(1)
-        trimmed_path = match.group(2).strip().strip("\"'")
-        is_file = "." in trimmed_path and not trimmed_path.endswith("/")
-        path_type = "blob" if is_file else "tree"
-        full_url = f"https://github.com/{username}/{repo}/{path_type}/{branch}/{trimmed_path}"
-        return f'click {node_id} "{full_url}"'
 
-    return re.sub(click_pattern, replace_path, diagram)
+def _process_node_paths(
+    graph_data: dict[str, Any],
+    username: str,
+    repo: str,
+    branch: str,
+    file_tree: str | None = None,
+    drill_down: bool = False,
+) -> dict[str, Any]:
+    """Process node paths to add clickUrl or clickAction/clickPath."""
+    tree_lines = set(file_tree.split("\n")) if file_tree else None
+
+    processed_nodes = []
+    for node in graph_data.get("nodes", []):
+        path = node.get("path")
+        if not path:
+            processed_nodes.append(node)
+            continue
+
+        is_file = "." in path and not path.endswith("/")
+        if tree_lines:
+            has_children = any(line.startswith(path + "/") for line in tree_lines)
+            if has_children:
+                is_file = False
+
+        node = dict(node)  # copy
+        if is_file:
+            node["clickUrl"] = f"https://github.com/{username}/{repo}/blob/{branch}/{path}"
+        elif drill_down:
+            node["clickAction"] = "drilldown"
+            node["clickPath"] = path
+        else:
+            node["clickUrl"] = f"https://github.com/{username}/{repo}/tree/{branch}/{path}"
+        processed_nodes.append(node)
+
+    return {**graph_data, "nodes": processed_nodes}
 
 
 def _parse_request_payload(payload: Any) -> tuple[GenerateRequest | None, str | None]:
@@ -205,8 +248,205 @@ async def generate_stream(request: Request):
             return _sse_message(payload)
 
         try:
-            github_data = _get_github_data(parsed.username, parsed.repo, parsed.github_pat)
+            github_service = GitHubService(pat=parsed.github_pat)
+            github_data = github_service.get_github_data(parsed.username, parsed.repo)
             model = get_model()
+
+            # ---- Scoped drill-down pipeline ----
+            if parsed.scope_path:
+                yield send(
+                    {
+                        "status": "started",
+                        "message": f"Starting drill-down generation for {parsed.scope_path}...",
+                    }
+                )
+
+                scope_path = parsed.scope_path
+                is_file = "." in scope_path.split("/")[-1] and not scope_path.endswith("/")
+
+                if is_file:
+                    # File-level drill-down
+                    file_content = github_service.get_file_content(
+                        parsed.username, parsed.repo, scope_path, github_data.default_branch,
+                    )
+                    # Truncate very large files
+                    lines = file_content.split("\n")
+                    if len(lines) > 3000:
+                        file_content = "\n".join(lines[:3000]) + "\n... (truncated)"
+
+                    system_prompt = SYSTEM_DRILLDOWN_FILE_PROMPT
+                    user_data = {
+                        "parent_context": parsed.parent_explanation or "",
+                        "scope_path": scope_path,
+                        "file_content": file_content,
+                    }
+                else:
+                    # Directory-level drill-down
+                    scoped_tree = GitHubService.get_scoped_file_tree(
+                        github_data.file_tree, scope_path,
+                    )
+                    scoped_lines = [l for l in scoped_tree.split("\n") if l.strip()]
+                    if len(scoped_lines) < 3:
+                        yield send(
+                            {
+                                "status": "error",
+                                "error": f"Directory '{scope_path}' has fewer than 3 files. Open it on GitHub instead.",
+                                "error_code": "SCOPE_TOO_SMALL",
+                            }
+                        )
+                        return
+
+                    # Fetch key entry-point files
+                    entry_point_names = [
+                        "index.ts", "index.tsx", "index.js", "main.py", "__init__.py",
+                        "mod.rs", "lib.rs", "main.go", "main.ts", "app.ts", "app.py",
+                    ]
+                    file_contents_parts: list[str] = []
+                    for line in scoped_lines[:50]:  # check first 50 paths
+                        filename = line.split("/")[-1] if "/" in line else line
+                        if filename in entry_point_names and len(file_contents_parts) < 5:
+                            try:
+                                content = github_service.get_file_content(
+                                    parsed.username, parsed.repo, line, github_data.default_branch,
+                                )
+                                file_contents_parts.append(f"--- {line} ---\n{content}")
+                            except Exception:
+                                pass
+
+                    system_prompt = SYSTEM_DRILLDOWN_DIRECTORY_PROMPT
+                    user_data: dict[str, str] = {
+                        "parent_context": parsed.parent_explanation or "",
+                        "scope_path": scope_path,
+                        "sub_tree": scoped_tree,
+                    }
+                    if file_contents_parts:
+                        user_data["file_contents"] = "\n\n".join(file_contents_parts)
+
+                # Stage 1: Explanation + component mapping (combined)
+                yield send(
+                    {
+                        "status": "explanation",
+                        "message": f"Analyzing {scope_path}...",
+                    }
+                )
+
+                explanation_response = ""
+                async for chunk in openai_service.stream_completion(
+                    model=model,
+                    system_prompt=system_prompt,
+                    data=user_data,
+                    api_key=parsed.api_key,
+                    reasoning_effort="medium",
+                ):
+                    explanation_response += chunk
+                    yield send({"status": "explanation_chunk", "chunk": chunk})
+
+                # Extract explanation and component mapping from response
+                explanation = explanation_response
+                exp_start = explanation_response.find("<explanation>")
+                exp_end = explanation_response.find("</explanation>")
+                if exp_start != -1 and exp_end != -1:
+                    explanation = explanation_response[exp_start:exp_end + len("</explanation>")]
+
+                component_mapping = _extract_component_mapping(explanation_response)
+                is_leaf = "<is_leaf>true</is_leaf>" in explanation_response.lower()
+
+                # Stage 2: Diagram generation
+                yield send(
+                    {
+                        "status": "diagram",
+                        "message": "Generating diagram...",
+                    }
+                )
+
+                diagram_data: dict[str, str] = {"explanation": explanation}
+                if not is_file and "<component_mapping>" in explanation_response:
+                    diagram_data["component_mapping"] = component_mapping
+
+                # Stream JSONL and emit diagram_item events progressively
+                line_buffer = ""
+                graph_data: dict[str, Any] = {"nodes": [], "edges": [], "groups": []}
+
+                async for chunk in openai_service.stream_completion(
+                    model=model,
+                    system_prompt=SYSTEM_DRILLDOWN_DIAGRAM_PROMPT,
+                    data=diagram_data,
+                    api_key=parsed.api_key,
+                    reasoning_effort="low",
+                ):
+                    line_buffer += chunk
+                    yield send({"status": "diagram_chunk", "chunk": chunk})
+
+                    # Process complete lines
+                    while "\n" in line_buffer:
+                        newline_idx = line_buffer.index("\n")
+                        line = line_buffer[:newline_idx]
+                        line_buffer = line_buffer[newline_idx + 1:]
+                        cleaned = _strip_json_code_fences(line)
+                        item = _parse_jsonl_line(cleaned)
+                        if item:
+                            kind = item["kind"]
+                            if kind == "node":
+                                graph_data["nodes"].append(item)
+                            elif kind == "edge":
+                                graph_data["edges"].append(item)
+                            elif kind == "group":
+                                graph_data["groups"].append(item)
+                            yield send({"status": "diagram_item", "item": item})
+
+                # Process any remaining buffer
+                if line_buffer.strip():
+                    cleaned = _strip_json_code_fences(line_buffer)
+                    item = _parse_jsonl_line(cleaned)
+                    if item:
+                        kind = item["kind"]
+                        if kind == "node":
+                            graph_data["nodes"].append(item)
+                        elif kind == "edge":
+                            graph_data["edges"].append(item)
+                        elif kind == "group":
+                            graph_data["groups"].append(item)
+                        yield send({"status": "diagram_item", "item": item})
+
+                if not graph_data["nodes"]:
+                    yield send(
+                        {
+                            "status": "error",
+                            "error": "Diagram generation produced no valid nodes. Please retry.",
+                            "error_code": "EMPTY_DIAGRAM",
+                        }
+                    )
+                    return
+
+                processed_graph = _process_node_paths(
+                    graph_data,
+                    parsed.username,
+                    parsed.repo,
+                    github_data.default_branch,
+                    file_tree=github_data.file_tree,
+                    drill_down=True,
+                )
+
+                yield send(
+                    {
+                        "status": "complete",
+                        "diagram": json.dumps(processed_graph),
+                        "explanation": explanation,
+                        "mapping": component_mapping if not is_file else "",
+                        "is_leaf": is_leaf,
+                    }
+                )
+                log_event(
+                    "generate.stream.drilldown.success",
+                    username=parsed.username,
+                    repo=parsed.repo,
+                    scope_path=scope_path,
+                    elapsed_ms=timer.elapsed_ms(),
+                    model=model,
+                )
+                return
+
+            # ---- Standard 3-stage pipeline (no scope_path) ----
             token_count = await _estimate_repo_input_tokens(
                 model=model,
                 file_tree=github_data.file_tree,
@@ -313,7 +553,10 @@ async def generate_stream(request: Request):
                 }
             )
 
-            mermaid_code = ""
+            # Stream JSONL and emit diagram_item events progressively
+            line_buffer = ""
+            graph_data: dict[str, Any] = {"nodes": [], "edges": [], "groups": []}
+
             async for chunk in openai_service.stream_completion(
                 model=model,
                 system_prompt=SYSTEM_THIRD_PROMPT,
@@ -324,107 +567,61 @@ async def generate_stream(request: Request):
                 api_key=parsed.api_key,
                 reasoning_effort="low",
             ):
-                mermaid_code += chunk
+                line_buffer += chunk
                 yield send({"status": "diagram_chunk", "chunk": chunk})
 
-            candidate_diagram = _strip_mermaid_code_fences(mermaid_code)
-            validation_result = await asyncio.to_thread(
-                validate_mermaid_syntax,
-                candidate_diagram,
-            )
-            had_fix_loop = not validation_result.valid
+                # Process complete lines
+                while "\n" in line_buffer:
+                    newline_idx = line_buffer.index("\n")
+                    line = line_buffer[:newline_idx]
+                    line_buffer = line_buffer[newline_idx + 1:]
+                    cleaned = _strip_json_code_fences(line)
+                    item = _parse_jsonl_line(cleaned)
+                    if item:
+                        kind = item["kind"]
+                        if kind == "node":
+                            graph_data["nodes"].append(item)
+                        elif kind == "edge":
+                            graph_data["edges"].append(item)
+                        elif kind == "group":
+                            graph_data["groups"].append(item)
+                        yield send({"status": "diagram_item", "item": item})
 
-            if not validation_result.valid:
-                parser_feedback = format_validation_feedback(validation_result)
-                yield send(
-                    {
-                        "status": "diagram_fixing",
-                        "message": "Diagram generated. Mermaid syntax validation failed, starting auto-fix loop...",
-                        "parser_error": parser_feedback,
-                    }
-                )
+            # Process any remaining buffer
+            if line_buffer.strip():
+                cleaned = _strip_json_code_fences(line_buffer)
+                item = _parse_jsonl_line(cleaned)
+                if item:
+                    kind = item["kind"]
+                    if kind == "node":
+                        graph_data["nodes"].append(item)
+                    elif kind == "edge":
+                        graph_data["edges"].append(item)
+                    elif kind == "group":
+                        graph_data["groups"].append(item)
+                    yield send({"status": "diagram_item", "item": item})
 
-            attempt = 1
-            while (not validation_result.valid) and attempt <= MAX_MERMAID_FIX_ATTEMPTS:
-                parser_feedback = format_validation_feedback(validation_result)
-                yield send(
-                    {
-                        "status": "diagram_fix_attempt",
-                        "message": f"Fixing Mermaid syntax (attempt {attempt}/{MAX_MERMAID_FIX_ATTEMPTS})...",
-                        "fix_attempt": attempt,
-                        "fix_max_attempts": MAX_MERMAID_FIX_ATTEMPTS,
-                        "parser_error": parser_feedback,
-                    }
-                )
-
-                repaired_diagram = ""
-                async for chunk in openai_service.stream_completion(
-                    model=model,
-                    system_prompt=SYSTEM_FIX_MERMAID_PROMPT,
-                    data={
-                        "mermaid_code": candidate_diagram,
-                        "parser_error": parser_feedback,
-                        "explanation": explanation,
-                        "component_mapping": component_mapping,
-                    },
-                    api_key=parsed.api_key,
-                    reasoning_effort="low",
-                ):
-                    repaired_diagram += chunk
-                    yield send(
-                        {
-                            "status": "diagram_fix_chunk",
-                            "chunk": chunk,
-                            "fix_attempt": attempt,
-                            "fix_max_attempts": MAX_MERMAID_FIX_ATTEMPTS,
-                        }
-                    )
-
-                candidate_diagram = _strip_mermaid_code_fences(repaired_diagram)
-                yield send(
-                    {
-                        "status": "diagram_fix_validating",
-                        "message": f"Validating Mermaid syntax after attempt {attempt}/{MAX_MERMAID_FIX_ATTEMPTS}...",
-                        "fix_attempt": attempt,
-                        "fix_max_attempts": MAX_MERMAID_FIX_ATTEMPTS,
-                    }
-                )
-                validation_result = await asyncio.to_thread(
-                    validate_mermaid_syntax,
-                    candidate_diagram,
-                )
-                attempt += 1
-
-            if not validation_result.valid:
+            if not graph_data["nodes"]:
                 yield send(
                     {
                         "status": "error",
-                        "error": "Generated Mermaid remained syntactically invalid after auto-fix attempts. Please retry generation.",
-                        "error_code": "MERMAID_SYNTAX_UNRESOLVED",
-                        "parser_error": format_validation_feedback(validation_result),
+                        "error": "Diagram generation produced no valid nodes. Please retry.",
+                        "error_code": "EMPTY_DIAGRAM",
                     }
                 )
                 return
 
-            processed_diagram = process_click_events(
-                candidate_diagram,
+            processed_graph = _process_node_paths(
+                graph_data,
                 parsed.username,
                 parsed.repo,
                 github_data.default_branch,
             )
 
-            if had_fix_loop:
-                yield send(
-                    {
-                        "status": "diagram_fixing",
-                        "message": "Mermaid syntax validated. Finalizing diagram output...",
-                    }
-                )
-
             yield send(
                 {
                     "status": "complete",
-                    "diagram": processed_diagram,
+                    "diagram": json.dumps(processed_graph),
                     "explanation": explanation,
                     "mapping": component_mapping,
                 }

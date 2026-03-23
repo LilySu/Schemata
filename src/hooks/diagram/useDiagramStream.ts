@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 
 import { streamDiagramGeneration } from "~/features/diagram/api";
+import type { GraphItem } from "~/features/diagram/graph-types";
 import type {
   DiagramStreamMessage,
   DiagramStreamState,
@@ -9,7 +10,11 @@ import type {
 interface UseDiagramStreamOptions {
   username: string;
   repo: string;
-  onComplete: (result: { diagram: string; explanation: string }) => Promise<void>;
+  onComplete: (result: {
+    diagram: string;
+    explanation: string;
+    isLeaf?: boolean;
+  }) => Promise<void>;
   onError: (message: string) => void;
 }
 
@@ -28,9 +33,9 @@ export function useDiagramStream({
         explanation: string;
         mapping: string;
         diagram: string;
-        fixDiagramDraft: string;
       },
     ) => {
+      console.log("[stream-hook] message:", data.status, data.error ? "ERROR:" + data.error : "");
       if (data.error) {
         setState({
           status: "error",
@@ -44,38 +49,18 @@ export function useDiagramStream({
 
       switch (data.status) {
         case "started":
+        case "analyzing":
         case "explanation_sent":
         case "explanation":
         case "mapping_sent":
         case "mapping":
         case "diagram_sent":
         case "diagram":
-        case "diagram_fixing":
-        case "diagram_fix_attempt":
-        case "diagram_fix_validating":
           setState((prev) => ({
             ...prev,
             status: data.status,
             message: data.message,
-            parserError: data.parser_error,
-            fixAttempt: data.fix_attempt,
-            fixMaxAttempts: data.fix_max_attempts,
-            ...(data.status === "diagram_fix_attempt"
-              ? { fixDiagramDraft: "" }
-              : {}),
           }));
-          break;
-        case "diagram_fix_chunk":
-          if (data.chunk) {
-            buffers.fixDiagramDraft += data.chunk;
-            setState((prev) => ({
-              ...prev,
-              status: "diagram_fix_chunk",
-              fixDiagramDraft: buffers.fixDiagramDraft,
-              fixAttempt: data.fix_attempt ?? prev.fixAttempt,
-              fixMaxAttempts: data.fix_max_attempts ?? prev.fixMaxAttempts,
-            }));
-          }
           break;
         case "explanation_chunk":
           if (data.chunk) {
@@ -107,6 +92,21 @@ export function useDiagramStream({
             }));
           }
           break;
+        case "diagram_item":
+          if (data.item) {
+            // Forward to FlowDiagram for progressive rendering
+            const addItem = (
+              window as unknown as Record<string, unknown>
+            ).__flowDiagramAddItem as
+              | ((item: GraphItem) => void)
+              | undefined;
+            addItem?.(data.item);
+            setState((prev) => ({
+              ...prev,
+              status: "diagram_item",
+            }));
+          }
+          break;
         case "complete": {
           const explanation = data.explanation ?? buffers.explanation;
           const diagram = data.diagram ?? buffers.diagram;
@@ -116,7 +116,7 @@ export function useDiagramStream({
             diagram,
             mapping: data.mapping ?? buffers.mapping,
           });
-          await onComplete({ explanation, diagram });
+          await onComplete({ explanation, diagram, isLeaf: data.is_leaf });
           return false;
         }
         case "error":
@@ -135,13 +135,21 @@ export function useDiagramStream({
   );
 
   const runGeneration = useCallback(
-    async (githubPat?: string) => {
-      setState({ status: "started", message: "Starting generation process..." });
+    async (
+      githubPat?: string,
+      scopePath?: string,
+      parentExplanation?: string,
+    ) => {
+      setState({
+        status: "started",
+        message: scopePath
+          ? `Starting drill-down for ${scopePath}...`
+          : "Starting generation process...",
+      });
       const buffers = {
         explanation: "",
         mapping: "",
         diagram: "",
-        fixDiagramDraft: "",
       };
 
       await streamDiagramGeneration(
@@ -150,6 +158,8 @@ export function useDiagramStream({
           repo,
           apiKey: localStorage.getItem("openai_key") ?? undefined,
           githubPat,
+          ...(scopePath && { scopePath }),
+          ...(parentExplanation && { parentExplanation }),
         },
         {
           onMessage: (message) => handleStreamMessage(message, buffers),
